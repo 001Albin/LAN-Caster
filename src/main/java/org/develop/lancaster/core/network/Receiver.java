@@ -1,31 +1,43 @@
 package org.develop.lancaster.core.network;
 
-import java.io.DataOutputStream;
-import java.io.FileOutputStream;
-import java.io.InputStream;
+import java.io.*;
 import java.net.Socket;
 
 public class Receiver {
     public static void main(String[] args) {
-        String outputName = "received_copy.txt";
-
         try (Socket socket = new Socket("localhost", 5000);
-             InputStream is = socket.getInputStream();
-             FileOutputStream fos = new FileOutputStream(outputName)) {
+             DataInputStream dis = new DataInputStream(socket.getInputStream());
+             DataOutputStream dos = new DataOutputStream(socket.getOutputStream())) {
 
-            System.out.println("[Receiver] Connected. Downloading file...");
+            System.out.println("[Receiver] Connected. Waiting for metadata...");
 
-            // --- THE BINARY STREAM LOGIC (Module 2) ---
-            byte[] buffer = new byte[4096]; // Same buffer size
+            // --- 1. READ METADATA ---
+            String fileName = dis.readUTF(); // Read Name
+            long fileSize = dis.readLong();  // Read Size
+
+            System.out.println("[Receiver] Incoming File: " + fileName + " (" + fileSize + " bytes)");
+
+            // --- 2. CREATE FILE & SEND ACKNOWLEDGMENT ---
+            File file = new File("downloaded_" + fileName); // Add prefix to avoid overwriting original
+            FileOutputStream fos = new FileOutputStream(file);
+
+            dos.writeUTF("READY"); // Tell Sender to go ahead
+            dos.flush();
+
+            // --- 3. RECEIVE FILE CONTENT ---
+            byte[] buffer = new byte[4096];
             int bytesRead;
+            long totalRead = 0;
 
-            // Read from socket -> Write to disk
-            while ((bytesRead = is.read(buffer)) != -1) {
+            // We loop until we have read exactly 'fileSize' bytes
+            // (Or until stream ends, but counting is safer for progress bars later)
+            while (totalRead < fileSize && (bytesRead = dis.read(buffer)) != -1) {
                 fos.write(buffer, 0, bytesRead);
+                totalRead += bytesRead;
             }
-            // ------------------------------------------
 
-            System.out.println("[Receiver] Download Complete! Saved as: " + outputName);
+            fos.close();
+            System.out.println("[Receiver] Saved as: " + file.getAbsolutePath());
 
         } catch (Exception e) {
             e.printStackTrace();
