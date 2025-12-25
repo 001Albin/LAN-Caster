@@ -10,7 +10,7 @@ public class Sender {
     public static void main(String[] args) {
         System.out.println("Sender is running...");
 
-        File file = new File("vibeproject.pdf");
+        File file = new File("movie.mp4");
 
         // 1. Initialize ServerSocket on Port 5000
         try(ServerSocket serverSocket = new ServerSocket(5000)){
