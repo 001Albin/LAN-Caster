@@ -5,53 +5,35 @@ package org.develop.lancaster.core.network;
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class Sender {
+    // 10 Threads = Up to 10 parallel chunks or clients
+    private static final int THREAD_POOL_SIZE = 10;
+
     public static void main(String[] args) {
-        System.out.println("Sender is running...");
+        // Hardcoded for now, later this comes from UI
+        String filePath = "test_file.txt";
 
-        File file = new File("movie.mp4");
+        // Create a pool of threads
+        ExecutorService pool = Executors.newFixedThreadPool(THREAD_POOL_SIZE);
 
-        // 1. Initialize ServerSocket on Port 5000
-        try(ServerSocket serverSocket = new ServerSocket(5000)){
-            System.out.println("[Sender] Waiting for connection...");
+        try (ServerSocket serverSocket = new ServerSocket(5000)) {
+            System.out.println("[Sender] Multi-threaded Server Started on Port 5000...");
+            System.out.println("[Sender] Serving file: " + filePath);
 
-            try(Socket socket = serverSocket.accept();
-                DataOutputStream dos = new DataOutputStream(socket.getOutputStream());
-                DataInputStream dis = new DataInputStream(socket.getInputStream());
-                FileInputStream fis = new FileInputStream(file);){
+            while (true) {
+                // 1. Accept Connection (Blocks here until someone connects)
+                Socket client = serverSocket.accept();
 
-                System.out.println("[Sender] Connected. Sending Metadata...");
-
-                // --- 1. SEND METADATA (The Handshake) ---
-                dos.writeUTF(file.getName());  // Send Filename
-                dos.writeLong(file.length());  // Send File Size
-                dos.flush(); // Force send immediately
-
-                // --- 2. WAIT FOR ACKNOWLEDGMENT ---
-                String response = dis.readUTF();
-                if (!"READY".equals(response)) {
-                    System.err.println("[Sender] Receiver rejected transfer.");
-                    return; // Stop if client isn't ready
-                }
-
-                System.out.println("[Sender] Client is READY. Sending bytes...");
-
-                // --- 3. SEND FILE CONTENT (Binary Stream) ---
-                byte[] buffer = new byte[4096];
-                int bytesRead;
-                long totalSent = 0;
-
-                while ((bytesRead = fis.read(buffer)) != -1) {
-                    dos.write(buffer, 0, bytesRead);
-                    totalSent += bytesRead;
-                }
-
-                System.out.println("[Sender] Finished! Sent " + totalSent + " bytes.");
+                // 2. Instead of handling it here, pass it to the pool!
+                System.out.println("[Sender] New Client Connected! Assigning to worker...");
+                pool.submit(new ClientHandler(client, filePath));
             }
 
         } catch (IOException e) {
-           e.printStackTrace();
+            e.printStackTrace();
         }
     }
 }
