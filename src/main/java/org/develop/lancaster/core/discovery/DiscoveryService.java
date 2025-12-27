@@ -48,13 +48,13 @@ public class DiscoveryService implements Runnable {
                     String senderIp = packet.getAddress().getHostAddress();
 
                     // If it's not me, notify the UI!
-                    if (!senderId.equals(myUniqueId)) {
+                   // if (!senderId.equals(myUniqueId)) {
                         // System.out.println("[Discovery] Found: " + senderIp);
 
                         // TRIGGER THE CALLBACK
                         if (onPeerFound != null) {
                             onPeerFound.accept(senderIp);
-                        }
+                        //}//
                     }
                 }
             }

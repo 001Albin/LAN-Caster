@@ -1,10 +1,10 @@
 package org.develop.lancaster.core.network;
 
+import org.develop.lancaster.core.transfer.ProgressListener;
 import java.io.*;
 import java.net.Socket;
 import java.net.SocketException;
 import java.nio.channels.FileChannel;
-import java.nio.channels.SocketChannel;
 import java.nio.channels.Channels;
 import java.nio.channels.WritableByteChannel;
 
@@ -12,23 +12,25 @@ public class ClientHandler implements Runnable {
 
     private final Socket clientSocket;
     private final File fileToSend;
+    private final ProgressListener listener; // Add Listener Field
 
-    public ClientHandler(Socket socket, String filePath) {
+    // Updated Constructor with Listener
+    public ClientHandler(Socket socket, String filePath, ProgressListener listener) {
         this.clientSocket = socket;
         this.fileToSend = new File(filePath);
+        this.listener = listener;
     }
 
     @Override
     public void run() {
         try (DataInputStream dis = new DataInputStream(clientSocket.getInputStream());
              DataOutputStream dos = new DataOutputStream(clientSocket.getOutputStream());
-             // Open the File Channel (Direct Disk Access)
              FileInputStream fis = new FileInputStream(fileToSend);
              FileChannel fileChannel = fis.getChannel()) {
 
-            // Get the Socket Channel (Direct Network Access)
             WritableByteChannel socketChannel = Channels.newChannel(clientSocket.getOutputStream());
 
+            // 1. Handshake
             String command = dis.readUTF();
 
             if ("METADATA".equals(command)) {
@@ -44,20 +46,25 @@ public class ClientHandler implements Runnable {
                 long expectedSize = end - start;
                 long totalSent = 0;
 
-                // ZERO-COPY MAGIC:
-                // This tells the Operating System to move bytes directly from
-                // Disk to Network Card without using Java RAM.
+                // 2. High-Speed NIO Loop with Progress
                 while (totalSent < expectedSize) {
                     long remaining = expectedSize - totalSent;
 
-                    // transferTo returns how many bytes were actually transferred
+                    // Zero-Copy Transfer
                     long written = fileChannel.transferTo(start + totalSent, remaining, socketChannel);
 
-                    if (written == 0) break; // Should not happen unless blocked
+                    if (written == 0) break;
                     totalSent += written;
+
+                    // 3. UPDATE UI (Notify Listener)
+                    if (listener != null) {
+                        listener.onProgress(totalSent, expectedSize);
+                    }
                 }
 
-                System.out.println("[Handler] Sent Chunk (Zero-Copy): " + (start/1024/1024) + "MB - " + (end/1024/1024) + "MB");
+                // Final flush to ensure strict delivery
+                dos.flush();
+                System.out.println("[Handler] Sent: " + (totalSent / 1024 / 1024) + " MB to " + clientSocket.getInetAddress());
             }
 
         } catch (SocketException e) {
