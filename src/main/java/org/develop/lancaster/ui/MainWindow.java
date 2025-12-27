@@ -97,6 +97,7 @@ public class MainWindow extends Application {
         downloadBtn.setPrefHeight(40);
         downloadBtn.setMaxWidth(Double.MAX_VALUE);
 
+        // --- SEND BUTTON LOGIC ---
         sendBtn.setOnAction(e -> {
             ListView<String> listView = getListView(stage);
             List<String> selectedPeers = listView.getSelectionModel().getSelectedItems();
@@ -113,13 +114,17 @@ public class MainWindow extends Application {
             if (file != null) {
                 if (currentSender != null) currentSender.stop();
 
+                // Start Sender with Progress Callback
                 currentSender = new Sender((Socket socket) -> {
                     String peerIp = socket.getInetAddress().getHostAddress();
+
+                    // Create UI Card for this connection
                     final TransferUIComponents[] uiRef = new TransferUIComponents[1];
                     Platform.runLater(() -> {
-                        // Pass "Sending" as type
                         uiRef[0] = addTransferCard(file.getName(), peerIp, "Sending", file.length());
                     });
+
+                    // Return listener to update this specific card
                     return (current, total) -> updateProgress(uiRef[0], current, total);
                 });
 
@@ -128,6 +133,7 @@ public class MainWindow extends Application {
             }
         });
 
+        // --- DOWNLOAD BUTTON LOGIC ---
         downloadBtn.setOnAction(e -> {
             ListView<String> listView = getListView(stage);
             String selectedPeer = listView.getSelectionModel().getSelectedItem();
@@ -142,7 +148,6 @@ public class MainWindow extends Application {
             File saveDir = dirChooser.showDialog(stage);
 
             if (saveDir != null) {
-                // Pass "Downloading" as type
                 TransferUIComponents ui = addTransferCard("Requesting File...", selectedPeer, "Downloading", 100);
 
                 TransferManager tm = new TransferManager();
@@ -160,7 +165,7 @@ public class MainWindow extends Application {
         return container;
     }
 
-    // --- CORE UI UPDATE LOGIC ---
+    // --- PROGRESS UPDATE LOGIC ---
     private void updateProgress(TransferUIComponents ui, long current, long total) {
         if (ui == null) return;
 
@@ -172,23 +177,22 @@ public class MainWindow extends Application {
             ui.percentLabel.setText(percent + "%");
 
             if (progress >= 1.0) {
-                ui.statusLabel.setText("Completed");
+                ui.statusLabel.setText("Completed Successfully");
                 ui.statusLabel.setTextFill(Color.GREEN);
                 ui.progressBar.setStyle("-fx-accent: #28a745;"); // Green Bar
             } else {
-                // SMART UPDATE: Uses the specific transfer type (Sending... or Downloading...)
                 ui.statusLabel.setText(ui.transferType + "...");
                 ui.statusLabel.setTextFill(Color.web("#007bff")); // Blue Text
             }
         });
     }
 
-    // --- UI HELPERS ---
+    // --- UI COMPONENTS ---
     private static class TransferUIComponents {
         ProgressBar progressBar;
         Label percentLabel;
         Label statusLabel;
-        String transferType; // Store the type (Sending/Downloading)
+        String transferType;
 
         public TransferUIComponents(ProgressBar pb, Label pl, Label sl, String type) {
             this.progressBar = pb;
@@ -213,7 +217,6 @@ public class MainWindow extends Application {
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
-
         topRow.getChildren().addAll(nameLbl, spacer, statusLbl);
 
         Label ipLbl = new Label("Connected to: " + peerIp);
@@ -222,23 +225,18 @@ public class MainWindow extends Application {
 
         HBox bottomRow = new HBox(10);
         bottomRow.setAlignment(Pos.CENTER_LEFT);
-
         ProgressBar pb = new ProgressBar(0);
         pb.setMaxWidth(Double.MAX_VALUE);
         pb.setPrefHeight(15);
         HBox.setHgrow(pb, Priority.ALWAYS);
-
         Label percentLbl = new Label("0%");
         percentLbl.setMinWidth(40);
         percentLbl.setAlignment(Pos.CENTER_RIGHT);
-
         bottomRow.getChildren().addAll(pb, percentLbl);
 
         card.getChildren().addAll(topRow, ipLbl, bottomRow);
-
         progressPanel.getChildren().add(0, card);
 
-        // Pass the 'type' to the wrapper so we can use it later
         return new TransferUIComponents(pb, percentLbl, statusLbl, type);
     }
 
@@ -256,12 +254,8 @@ public class MainWindow extends Application {
         Thread t = new Thread(discoveryService);
         t.setDaemon(true);
         t.start();
-
         Thread b = new Thread(() -> {
-            while (true) {
-                discoveryService.broadcastPresence();
-                try { Thread.sleep(3000); } catch (Exception e) {}
-            }
+            while (true) { discoveryService.broadcastPresence(); try { Thread.sleep(3000); } catch (Exception e) {} }
         });
         b.setDaemon(true);
         b.start();

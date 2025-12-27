@@ -12,9 +12,9 @@ public class ClientHandler implements Runnable {
 
     private final Socket clientSocket;
     private final File fileToSend;
-    private final ProgressListener listener; // Add Listener Field
+    private final ProgressListener listener; // <--- The bridge to the UI
 
-    // Updated Constructor with Listener
+    // Constructor with Listener
     public ClientHandler(Socket socket, String filePath, ProgressListener listener) {
         this.clientSocket = socket;
         this.fileToSend = new File(filePath);
@@ -46,29 +46,28 @@ public class ClientHandler implements Runnable {
                 long expectedSize = end - start;
                 long totalSent = 0;
 
-                // 2. High-Speed NIO Loop with Progress
+                // 2. High-Speed Loop with Progress Reporting
                 while (totalSent < expectedSize) {
                     long remaining = expectedSize - totalSent;
 
-                    // Zero-Copy Transfer
+                    // Zero-Copy Transfer (Fastest Java Method)
                     long written = fileChannel.transferTo(start + totalSent, remaining, socketChannel);
 
                     if (written == 0) break;
                     totalSent += written;
 
-                    // 3. UPDATE UI (Notify Listener)
+                    // 3. --- NOTIFY UI HERE ---
                     if (listener != null) {
                         listener.onProgress(totalSent, expectedSize);
                     }
                 }
 
-                // Final flush to ensure strict delivery
                 dos.flush();
-                System.out.println("[Handler] Sent: " + (totalSent / 1024 / 1024) + " MB to " + clientSocket.getInetAddress());
+                System.out.println("[Handler] Sent " + (totalSent/1024/1024) + " MB to " + clientSocket.getInetAddress());
             }
 
         } catch (SocketException e) {
-            System.out.println("[Handler] Client disconnected.");
+            System.out.println("[Handler] Transfer stopped (Client disconnected).");
         } catch (IOException e) {
             e.printStackTrace();
         } finally {

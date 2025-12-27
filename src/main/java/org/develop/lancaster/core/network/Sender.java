@@ -16,13 +16,17 @@ public class Sender {
     private ServerSocket serverSocket;
     private ExecutorService pool;
 
-    // Factory to create a listener for each specific client connection
+    // Factory to create a listener for each specific client
     private final Function<Socket, ProgressListener> listenerFactory;
 
+    // --- CONSTRUCTORS ---
+
+    // 1. Default (No Progress Bar support) - Fixes your "Expected 1 argument" error
     public Sender() {
-        this(null); // Calls the main constructor with 'null'
+        this(null);
     }
 
+    // 2. Advanced (With Progress Bar support)
     public Sender(Function<Socket, ProgressListener> listenerFactory) {
         this.listenerFactory = listenerFactory;
     }
@@ -42,13 +46,13 @@ public class Sender {
                     if (running) {
                         System.out.println("[Sender] Connected: " + client.getInetAddress());
 
-                        // 1. Ask UI for a new ProgressListener for THIS specific client
+                        // Create the listener using the factory from UI
                         ProgressListener clientListener = null;
                         if (listenerFactory != null) {
                             clientListener = listenerFactory.apply(client);
                         }
 
-                        // 2. Pass it to the Handler
+                        // Pass listener to Handler
                         pool.submit(new ClientHandler(client, file.getAbsolutePath(), clientListener));
                     }
                 } catch (IOException e) {
@@ -56,7 +60,7 @@ public class Sender {
                 }
             }
         } catch (IOException e) {
-            System.err.println("[Sender] Port 5000 is occupied or error occurred.");
+            System.err.println("[Sender] Port 5000 is occupied.");
         }
     }
 
