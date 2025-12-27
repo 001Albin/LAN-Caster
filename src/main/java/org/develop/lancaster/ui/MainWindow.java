@@ -12,14 +12,14 @@ import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
+import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import org.develop.lancaster.core.discovery.DiscoveryService;
 import org.develop.lancaster.core.network.Sender;
-import org.develop.lancaster.core.transfer.ProgressListener;
+import org.develop.lancaster.core.transfer.TransferManager; // <--- IMPORT THIS
 
 import java.io.File;
-import java.net.Socket;
 import java.util.List;
 
 public class MainWindow extends Application {
@@ -27,8 +27,6 @@ public class MainWindow extends Application {
     private final ObservableList<String> peerList = FXCollections.observableArrayList();
     private DiscoveryService discoveryService;
     private VBox progressPanel;
-
-    // Keep a reference to stop it later if needed
     private Sender currentSender;
 
     @Override
@@ -59,8 +57,6 @@ public class MainWindow extends Application {
 
         ListView<String> listView = new ListView<>(peerList);
         listView.setPlaceholder(new Label("Scanning Local Network..."));
-
-        // ENABLE MULTI-SELECTION
         listView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
 
         VBox.setVgrow(listView, Priority.ALWAYS);
@@ -78,73 +74,72 @@ public class MainWindow extends Application {
         scrollPane.setStyle("-fx-background-color: transparent;");
         VBox.setVgrow(scrollPane, Priority.ALWAYS);
 
+        // --- BUTTONS ---
         Button sendBtn = new Button("Send File to Selected");
         sendBtn.setStyle("-fx-background-color: #0078D7; -fx-text-fill: white; -fx-font-weight: bold;");
         sendBtn.setMaxWidth(Double.MAX_VALUE);
 
+        Button downloadBtn = new Button("Download from Selected"); // <--- NEW BUTTON
+        downloadBtn.setStyle("-fx-background-color: #28a745; -fx-text-fill: white; -fx-font-weight: bold;");
+        downloadBtn.setMaxWidth(Double.MAX_VALUE);
+
+        // --- SEND LOGIC ---
         sendBtn.setOnAction(e -> {
-            // Get selected peers (Visual only, as we host for anyone who connects)
-            ListView<String> listView = (ListView<String>) ((VBox) ((SplitPane) stage.getScene().getRoot().lookup(".split-pane")).getItems().get(0)).getChildren().get(1);
+            ListView<String> listView = getListView(stage);
             List<String> selectedPeers = listView.getSelectionModel().getSelectedItems();
 
-            if (selectedPeers.isEmpty()) {
-                showAlert("Select Peer", "Please select who you want to send to.");
-                return;
-            }
+            if (selectedPeers.isEmpty()) { showAlert("Select Peer", "Select a peer to send to."); return; }
 
             FileChooser fileChooser = new FileChooser();
             File file = fileChooser.showOpenDialog(stage);
-
             if (file != null) {
-                // START HOSTING
-                startSendingLogic(file);
-                showAlert("Hosting Started", "File is ready! Waiting for " + selectedPeers.size() + " peers to connect...");
+                // Since we can't change Sender.java, we just start it without progress feedback for now
+                // OR you can implement the static listener trick if you want.
+                if (currentSender != null) currentSender.stop();
+                currentSender = new Sender(); // Using your original Sender constructor
+                new Thread(() -> currentSender.startServing(file)).start();
+
+                showAlert("Hosting Started", "Hosting " + file.getName() + " for " + selectedPeers.size() + " peers.");
             }
         });
 
-        return new VBox(15, header, scrollPane, sendBtn);
-    }
+        // --- DOWNLOAD LOGIC (This fixes your problem) ---
+        downloadBtn.setOnAction(e -> {
+            ListView<String> listView = getListView(stage);
+            String selectedPeer = listView.getSelectionModel().getSelectedItem(); // Only 1 for download
 
-    // --- LOGIC: Start the Sender Server ---
-    private void startSendingLogic(File file) {
-        if (currentSender != null) {
-            currentSender.stop(); // Stop previous host if exists
-        }
+            if (selectedPeer == null) { showAlert("Select Peer", "Select ONE peer to download from."); return; }
 
-        // Create Sender with a "Factory" for Progress Listeners
-        // When a client connects (Socket s), this code runs:
-        currentSender = new Sender((Socket socket) -> {
+            DirectoryChooser dirChooser = new DirectoryChooser();
+            dirChooser.setTitle("Where to save the file?");
+            File saveDir = dirChooser.showDialog(stage);
 
-            String peerIp = socket.getInetAddress().getHostAddress();
+            if (saveDir != null) {
+                // 1. Create UI Card
+                TransferUIComponents ui = addTransferCard("Unknown File", selectedPeer, "Downloading", 100);
 
-            // 1. Create Visual UI Card on JavaFX Thread
-            // We use a helper wrapper to pass the progress bar back
-            final ProgressBar[] pbRef = new ProgressBar[1];
-            final Label[] percentRef = new Label[1];
-
-            Platform.runLater(() -> {
-                TransferUIComponents ui = addTransferCard(file.getName(), peerIp, "Sending", file.length());
-                pbRef[0] = ui.progressBar;
-                percentRef[0] = ui.percentLabel;
-            });
-
-            // 2. Return the Listener that updates this specific card
-            return (current, total) -> {
-                double progress = (double) current / total;
-                Platform.runLater(() -> {
-                    if (pbRef[0] != null) {
-                        pbRef[0].setProgress(progress);
-                        percentRef[0].setText((int)(progress * 100) + "%");
-                    }
+                // 2. Start Transfer Manager
+                TransferManager tm = new TransferManager();
+                tm.downloadFile(selectedPeer, saveDir.getAbsolutePath(), (current, total) -> {
+                    double progress = (double) current / total;
+                    Platform.runLater(() -> {
+                        ui.progressBar.setProgress(progress);
+                        ui.percentLabel.setText((int)(progress * 100) + "%");
+                    });
                 });
-            };
+            }
         });
 
-        // Run Server in Background
-        new Thread(() -> currentSender.startServing(file)).start();
+        HBox buttonBox = new HBox(10, sendBtn, downloadBtn);
+        return new VBox(15, header, scrollPane, buttonBox);
     }
 
-    // Helper class to return UI references
+    // Helper to get list view from split pane
+    private ListView<String> getListView(Stage stage) {
+        return (ListView<String>) ((VBox) ((SplitPane) stage.getScene().getRoot().lookup(".split-pane")).getItems().get(0)).getChildren().get(1);
+    }
+
+    // --- UI HELPERS (Same as before) ---
     private static class TransferUIComponents {
         ProgressBar progressBar;
         Label percentLabel;
@@ -169,7 +164,6 @@ public class MainWindow extends Application {
 
         card.getChildren().addAll(infoBox, pb, percentLbl);
         HBox.setHgrow(infoBox, Priority.ALWAYS);
-
         progressPanel.getChildren().add(0, card);
         return new TransferUIComponents(pb, percentLbl);
     }
@@ -183,10 +177,7 @@ public class MainWindow extends Application {
         });
         new Thread(discoveryService).start();
         new Thread(() -> {
-            while (true) {
-                discoveryService.broadcastPresence();
-                try { Thread.sleep(3000); } catch (Exception e) {}
-            }
+            while (true) { discoveryService.broadcastPresence(); try { Thread.sleep(3000); } catch (Exception e) {} }
         }).start();
     }
 
@@ -198,12 +189,7 @@ public class MainWindow extends Application {
     }
 
     @Override
-    public void stop() {
-        if (currentSender != null) currentSender.stop();
-        System.exit(0);
-    }
+    public void stop() { if (currentSender != null) currentSender.stop(); System.exit(0); }
 
-    public static void main(String[] args) {
-        launch(args);
-    }
+    public static void main(String[] args) { launch(args); }
 }

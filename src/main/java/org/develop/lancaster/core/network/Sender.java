@@ -19,6 +19,10 @@ public class Sender {
     // Factory to create a listener for each specific client connection
     private final Function<Socket, ProgressListener> listenerFactory;
 
+    public Sender() {
+        this(null); // Calls the main constructor with 'null'
+    }
+
     public Sender(Function<Socket, ProgressListener> listenerFactory) {
         this.listenerFactory = listenerFactory;
     }
