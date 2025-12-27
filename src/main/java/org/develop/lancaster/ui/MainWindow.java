@@ -40,12 +40,9 @@ public class MainWindow extends Application {
     public void start(Stage primaryStage) {
         BorderPane root = new BorderPane();
         root.setPadding(new Insets(20));
-        root.setStyle("-fx-background-color: #f4f6f9;"); // Light gray professional background
+        root.setStyle("-fx-background-color: #f4f6f9;");
 
-        // --- LEFT SIDE: PEER LIST ---
         VBox leftPane = createPeerListPane();
-
-        // --- RIGHT SIDE: DASHBOARD ---
         VBox rightPane = createDashboardPane(primaryStage);
 
         SplitPane splitPane = new SplitPane();
@@ -73,7 +70,7 @@ public class MainWindow extends Application {
         listView.setStyle("-fx-font-size: 14px; -fx-border-color: #ccc; -fx-border-radius: 5;");
 
         VBox container = new VBox(15, header, listView);
-        container.setPadding(new Insets(0, 15, 0, 0)); // Right padding for spacing
+        container.setPadding(new Insets(0, 15, 0, 0));
         VBox.setVgrow(listView, Priority.ALWAYS);
         return container;
     }
@@ -82,7 +79,6 @@ public class MainWindow extends Application {
         Label header = new Label("Transfer Activity");
         header.setStyle(HEADER_STYLE);
 
-        // Scrollable Progress Area
         progressPanel = new VBox(10);
         progressPanel.setPadding(new Insets(5));
         ScrollPane scrollPane = new ScrollPane(progressPanel);
@@ -91,7 +87,6 @@ public class MainWindow extends Application {
         scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         VBox.setVgrow(scrollPane, Priority.ALWAYS);
 
-        // --- ACTION BUTTONS ---
         Button sendBtn = new Button("Send File");
         sendBtn.setStyle(BUTTON_SEND_STYLE);
         sendBtn.setPrefHeight(40);
@@ -102,7 +97,6 @@ public class MainWindow extends Application {
         downloadBtn.setPrefHeight(40);
         downloadBtn.setMaxWidth(Double.MAX_VALUE);
 
-        // --- SEND LOGIC ---
         sendBtn.setOnAction(e -> {
             ListView<String> listView = getListView(stage);
             List<String> selectedPeers = listView.getSelectionModel().getSelectedItems();
@@ -119,18 +113,13 @@ public class MainWindow extends Application {
             if (file != null) {
                 if (currentSender != null) currentSender.stop();
 
-                // USE THE SMART SENDER (Factory Pattern)
-                // This ensures the Sender UI updates when people connect
                 currentSender = new Sender((Socket socket) -> {
                     String peerIp = socket.getInetAddress().getHostAddress();
-
-                    // Create UI Card for this specific connection
                     final TransferUIComponents[] uiRef = new TransferUIComponents[1];
                     Platform.runLater(() -> {
+                        // Pass "Sending" as type
                         uiRef[0] = addTransferCard(file.getName(), peerIp, "Sending", file.length());
                     });
-
-                    // Return the listener that updates this card
                     return (current, total) -> updateProgress(uiRef[0], current, total);
                 });
 
@@ -139,7 +128,6 @@ public class MainWindow extends Application {
             }
         });
 
-        // --- DOWNLOAD LOGIC ---
         downloadBtn.setOnAction(e -> {
             ListView<String> listView = getListView(stage);
             String selectedPeer = listView.getSelectionModel().getSelectedItem();
@@ -154,10 +142,9 @@ public class MainWindow extends Application {
             File saveDir = dirChooser.showDialog(stage);
 
             if (saveDir != null) {
-                // 1. Add UI Card immediately
+                // Pass "Downloading" as type
                 TransferUIComponents ui = addTransferCard("Requesting File...", selectedPeer, "Downloading", 100);
 
-                // 2. Start Download in Background
                 TransferManager tm = new TransferManager();
                 tm.downloadFile(selectedPeer, saveDir.getAbsolutePath(), (current, total) -> updateProgress(ui, current, total));
             }
@@ -187,10 +174,11 @@ public class MainWindow extends Application {
             if (progress >= 1.0) {
                 ui.statusLabel.setText("Completed");
                 ui.statusLabel.setTextFill(Color.GREEN);
-                ui.progressBar.setStyle("-fx-accent: #28a745;"); // Turn bar green
+                ui.progressBar.setStyle("-fx-accent: #28a745;"); // Green Bar
             } else {
-                ui.statusLabel.setText("Transferring...");
-                ui.statusLabel.setTextFill(Color.BLUE);
+                // SMART UPDATE: Uses the specific transfer type (Sending... or Downloading...)
+                ui.statusLabel.setText(ui.transferType + "...");
+                ui.statusLabel.setTextFill(Color.web("#007bff")); // Blue Text
             }
         });
     }
@@ -200,21 +188,21 @@ public class MainWindow extends Application {
         ProgressBar progressBar;
         Label percentLabel;
         Label statusLabel;
+        String transferType; // Store the type (Sending/Downloading)
 
-        public TransferUIComponents(ProgressBar pb, Label pl, Label sl) {
+        public TransferUIComponents(ProgressBar pb, Label pl, Label sl, String type) {
             this.progressBar = pb;
             this.percentLabel = pl;
             this.statusLabel = sl;
+            this.transferType = type;
         }
     }
 
     private TransferUIComponents addTransferCard(String filename, String peerIp, String type, long totalBytes) {
-        // Main Card Container
         VBox card = new VBox(8);
         card.setStyle(CARD_STYLE);
         card.setPadding(new Insets(12));
 
-        // Top Row: Filename and Status
         HBox topRow = new HBox();
         Label nameLbl = new Label(type + ": " + filename);
         nameLbl.setFont(Font.font("System", FontWeight.BOLD, 13));
@@ -228,12 +216,10 @@ public class MainWindow extends Application {
 
         topRow.getChildren().addAll(nameLbl, spacer, statusLbl);
 
-        // Middle: Peer Info
         Label ipLbl = new Label("Connected to: " + peerIp);
         ipLbl.setTextFill(Color.GRAY);
         ipLbl.setFont(Font.font("System", 11));
 
-        // Bottom: Progress Bar
         HBox bottomRow = new HBox(10);
         bottomRow.setAlignment(Pos.CENTER_LEFT);
 
@@ -250,10 +236,10 @@ public class MainWindow extends Application {
 
         card.getChildren().addAll(topRow, ipLbl, bottomRow);
 
-        // Add to the top of the list
         progressPanel.getChildren().add(0, card);
 
-        return new TransferUIComponents(pb, percentLbl, statusLbl);
+        // Pass the 'type' to the wrapper so we can use it later
+        return new TransferUIComponents(pb, percentLbl, statusLbl, type);
     }
 
     private ListView<String> getListView(Stage stage) {
