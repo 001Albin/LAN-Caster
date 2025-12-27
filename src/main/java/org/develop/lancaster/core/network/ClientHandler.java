@@ -8,7 +8,7 @@ public class ClientHandler implements Runnable {
 
     private final Socket clientSocket;
     private final File fileToSend;
-    // INCREASE BUFFER: 4KB -> 64KB (Much faster for large files)
+    // BUFFER SIZE: 64KB (This matches your Receiver and is memory efficient)
     private static final int BUFFER_SIZE = 64 * 1024;
 
     public ClientHandler(Socket socket, String filePath) {
@@ -33,30 +33,36 @@ public class ClientHandler implements Runnable {
                 long start = Long.parseLong(parts[1]);
                 long end = Long.parseLong(parts[2]);
 
-                // Prepare "Bucket"
-                byte[] buffer = new byte[BUFFER_SIZE];
+                // 1. Move to the correct spot in the file
                 raf.seek(start);
 
+                byte[] buffer = new byte[BUFFER_SIZE];
                 long totalSent = 0;
                 long expectedSize = end - start;
 
+                // 2. The Streaming Loop (Solves the RAM crash)
+                // It reads 64KB -> sends 64KB -> repeats.
                 while (totalSent < expectedSize) {
-                    // Calculate how much to read (don't over-read past the chunk end)
+
+                    // Don't read past the end of the requested chunk
                     int remaining = (int) Math.min(BUFFER_SIZE, expectedSize - totalSent);
                     int bytesRead = raf.read(buffer, 0, remaining);
 
-                    if (bytesRead == -1) break; // End of file reached unexpectedly
+                    if (bytesRead == -1) break; // End of file
 
                     dos.write(buffer, 0, bytesRead);
                     totalSent += bytesRead;
                 }
-                // Only print when fully done with a chunk to reduce spam
+
+                // 3. FINAL FLUSH (Add this line!)
+                // Ensures the last bytes are pushed out before we close the socket.
+                dos.flush();
+
                 System.out.println("[Handler] Sent Chunk: " + start + " - " + end);
             }
 
         } catch (SocketException e) {
-            // This happens if the user cancels the download. It's normal.
-            System.out.println("[Handler] Client disconnected abruptly (Transfer cancelled).");
+            System.out.println("[Handler] Client disconnected (Transfer cancelled).");
         } catch (IOException e) {
             e.printStackTrace();
         } finally {
