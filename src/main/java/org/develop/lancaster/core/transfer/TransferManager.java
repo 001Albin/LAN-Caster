@@ -1,77 +1,45 @@
-//This class is the "Coordinator." It talks to the server once to get the file size, does the math to
-//split it, and then tells the ExecutorService to launch the workers.
 package org.develop.lancaster.core.transfer;
 
 import java.io.*;
 import java.net.Socket;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 
 public class TransferManager {
 
-    private static final int THREAD_COUNT = 4; // Use 4 parallel threads
+    private static final int PORT = 5000;
+    private final ExecutorService executor = Executors.newFixedThreadPool(4); // 4 Threads for SSD/WiFi
 
-    public void downloadFile(String serverIp, int port, String saveDir) {
-        ExecutorService pool = Executors.newFixedThreadPool(THREAD_COUNT);
+    public void downloadFile(String peerIp, String saveDir, ProgressListener uiListener) {
+        executor.submit(() -> {
+            try (Socket socket = new Socket(peerIp, PORT);
+                 DataInputStream dis = new DataInputStream(socket.getInputStream());
+                 DataOutputStream dos = new DataOutputStream(socket.getOutputStream())) {
 
-        try (Socket socket = new Socket(serverIp, port);
-             DataInputStream dis = new DataInputStream(socket.getInputStream());
-             DataOutputStream dos = new DataOutputStream(socket.getOutputStream())) {
+                // 1. Request Metadata
+                dos.writeUTF("METADATA");
+                dos.flush();
 
-            // 1. Handshake: Get Name and Size
-            System.out.println("[Manager] Connecting to get metadata...");
-            dos.writeUTF("METADATA");
-            String fileName = dis.readUTF();
-            long fileSize = dis.readLong();
-            System.out.println("[Manager] File: " + fileName + " (" + fileSize + " bytes)");
+                String filename = dis.readUTF();
+                long fileSize = dis.readLong();
 
-            // 2. Prepare the Empty File on Disk
-            File outFile = new File(saveDir, "downloaded_" + fileName);
-            try (RandomAccessFile raf = new RandomAccessFile(outFile, "rw")) {
-                raf.setLength(fileSize); // Reserve the disk space immediately (Sparse File)
+                File saveFile = new File(saveDir, filename);
+                System.out.println("[Manager] Downloading " + filename + " (" + fileSize + " bytes)");
+
+                // 2. Start Transfer (Using 1 Giant Chunk for simplicity & HDD safety)
+                // You can split this into 4 chunks if you want, but 1 is safer for HDDs.
+                ChunkTransferTask task = new ChunkTransferTask(
+                        peerIp, PORT, saveFile, 0, fileSize, 0, uiListener
+                );
+
+                FutureTask<Boolean> future = new FutureTask<>(task);
+                new Thread(future).start();
+                future.get(); // Wait for finish
+
+            } catch (Exception e) {
+                e.printStackTrace();
             }
-
-            // 3. Calculate Splits (The Math)
-            long chunkSize = fileSize / THREAD_COUNT;
-            List<ChunkTransferTask> tasks = new ArrayList<>();
-
-            for (int i = 0; i < THREAD_COUNT; i++) {
-                long start = i * chunkSize;
-                long end = (i == THREAD_COUNT - 1) ? fileSize : (start + chunkSize); // Last chunk gets the remainder
-
-                tasks.add(new ChunkTransferTask(serverIp, port, outFile, start, end, i));
-            }
-
-            // 4. Launch Everything!
-            System.out.println("[Manager] Launching " + THREAD_COUNT + " parallel threads...");
-            List<Future<Boolean>> results = pool.invokeAll(tasks);
-
-            // 5. Wait for all to finish
-            for (Future<Boolean> result : results) {
-                result.get(); // This blocks until the task is done
-            }
-
-            System.out.println("------------------------------------------------");
-            System.out.println("[Manager] TRANSFER COMPLETE! File saved at: " + outFile.getAbsolutePath());
-            System.out.println("------------------------------------------------");
-
-        } catch (Exception e) {
-            e.printStackTrace();
-        } finally {
-            pool.shutdown();
-        }
-    }
-
-    // Quick Main for Testing
-    public static void main(String[] args) {
-        TransferManager tm = new TransferManager();
-        // REPLACE WITH YOUR WINDOWS IP if running on Kali
-        String windowsIp = "localhost";
-
-        // "." means save in current directory
-        tm.downloadFile(windowsIp, 5000, ".");
+        });
     }
 }
