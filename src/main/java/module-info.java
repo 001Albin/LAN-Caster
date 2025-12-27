@@ -1,8 +1,14 @@
 module org.develop.lancaster {
     requires javafx.controls;
     requires javafx.fxml;
+    requires java.base;
 
+    // Export core packages so other parts of the app can see them
+    exports org.develop.lancaster.core.discovery;
+    exports org.develop.lancaster.core.network;
+    exports org.develop.lancaster.core.transfer;
+    exports org.develop.lancaster.ui; // We are about to create this
 
-    opens org.develop.lancaster to javafx.fxml;
-    exports org.develop.lancaster;
+    // Allow JavaFX to access the UI classes
+    opens org.develop.lancaster.ui to javafx.fxml;
 }

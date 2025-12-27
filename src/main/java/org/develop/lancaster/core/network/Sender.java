@@ -14,7 +14,7 @@ public class Sender {
 
     public static void main(String[] args) {
         // Hardcoded for now, later this comes from UI
-        String filePath = "test_file.txt";
+        String filePath = "SystemDesign.pdf";
 
         // Create a pool of threads
         ExecutorService pool = Executors.newFixedThreadPool(THREAD_POOL_SIZE);

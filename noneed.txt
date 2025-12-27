@@ -1,0 +1,17 @@
+package com.lancaster.core.discovery;
+
+public class RunDiscovery {
+    public static void main(String[] args) throws InterruptedException {
+        // This is just to test if Windows can SEE us.
+        // We don't need the callback (null) because we are just shouting.
+        DiscoveryService service = new DiscoveryService();
+
+        System.out.println("[Kali] Starting Discovery Broadcaster...");
+
+        while(true) {
+            service.broadcastPresence();
+            System.out.println("[Kali] Shouted: I am here!");
+            Thread.sleep(3000); // Shout every 3 seconds
+        }
+    }
+}
