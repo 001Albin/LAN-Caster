@@ -2,36 +2,53 @@
 
 package org.develop.lancaster.core.network;
 
-import java.io.*;
+import java.io.File;
+import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class Sender {
-    // 10 Threads = Up to 10 parallel chunks or clients
+    private static final int PORT = 5000;
     private static final int THREAD_POOL_SIZE = 10;
+    private volatile boolean running = false;
+    private ServerSocket serverSocket;
+    private ExecutorService pool;
 
-    public static void main(String[] args) {
-        // Hardcoded for now, later this comes from UI
-        String filePath = "SystemDesign.pdf";
+    // This method is called by the UI Button
+    public void startServing(File file) {
+        pool = Executors.newFixedThreadPool(THREAD_POOL_SIZE);
+        running = true;
 
-        // Create a pool of threads
-        ExecutorService pool = Executors.newFixedThreadPool(THREAD_POOL_SIZE);
+        try {
+            serverSocket = new ServerSocket(PORT);
+            System.out.println("[Sender] Server started. Hosting: " + file.getName());
 
-        try (ServerSocket serverSocket = new ServerSocket(5000)) {
-            System.out.println("[Sender] Multi-threaded Server Started on Port 5000...");
-            System.out.println("[Sender] Serving file: " + filePath);
+            while (running) {
+                try {
+                    // Wait for Kali to connect
+                    Socket client = serverSocket.accept();
 
-            while (true) {
-                // 1. Accept Connection (Blocks here until someone connects)
-                Socket client = serverSocket.accept();
-
-                // 2. Instead of handling it here, pass it to the pool!
-                System.out.println("[Sender] New Client Connected! Assigning to worker...");
-                pool.submit(new ClientHandler(client, filePath));
+                    if (running) {
+                        System.out.println("[Sender] Incoming connection...");
+                        pool.submit(new ClientHandler(client, file.getAbsolutePath()));
+                    }
+                } catch (IOException e) {
+                    if (running) e.printStackTrace();
+                }
             }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
 
+    public void stop() {
+        running = false;
+        try {
+            if (serverSocket != null) serverSocket.close();
+            if (pool != null) pool.shutdownNow();
+            System.out.println("[Sender] Server stopped.");
         } catch (IOException e) {
             e.printStackTrace();
         }
