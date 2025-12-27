@@ -2,11 +2,14 @@ package org.develop.lancaster.core.network;
 
 import java.io.*;
 import java.net.Socket;
+import java.net.SocketException;
 
 public class ClientHandler implements Runnable {
 
     private final Socket clientSocket;
     private final File fileToSend;
+    // INCREASE BUFFER: 4KB -> 64KB (Much faster for large files)
+    private static final int BUFFER_SIZE = 64 * 1024;
 
     public ClientHandler(Socket socket, String filePath) {
         this.clientSocket = socket;
@@ -19,34 +22,41 @@ public class ClientHandler implements Runnable {
              DataOutputStream dos = new DataOutputStream(clientSocket.getOutputStream());
              RandomAccessFile raf = new RandomAccessFile(fileToSend, "r")) {
 
-            System.out.println("[Handler] Handling connection from: " + clientSocket.getInetAddress());
-
-            // 1. Wait for Command (What does the client want?)
-            String command = dis.readUTF(); // e.g., "METADATA" or "CHUNK|0|1024"
+            String command = dis.readUTF();
 
             if ("METADATA".equals(command)) {
-                // Send File Info
                 dos.writeUTF(fileToSend.getName());
                 dos.writeLong(fileToSend.length());
-                System.out.println("[Handler] Sent Metadata.");
             }
             else if (command.startsWith("CHUNK")) {
-                // HANDLE RANGE REQUEST: "CHUNK|start|end"
                 String[] parts = command.split("\\|");
                 long start = Long.parseLong(parts[1]);
                 long end = Long.parseLong(parts[2]);
-                int chunkSize = (int) (end - start);
 
-                // Read specific part of the file
-                byte[] buffer = new byte[chunkSize];
-                raf.seek(start); // JUMP to the specific position!
-                raf.readFully(buffer);
+                // Prepare "Bucket"
+                byte[] buffer = new byte[BUFFER_SIZE];
+                raf.seek(start);
 
-                // Send back only that part
-                dos.write(buffer);
+                long totalSent = 0;
+                long expectedSize = end - start;
+
+                while (totalSent < expectedSize) {
+                    // Calculate how much to read (don't over-read past the chunk end)
+                    int remaining = (int) Math.min(BUFFER_SIZE, expectedSize - totalSent);
+                    int bytesRead = raf.read(buffer, 0, remaining);
+
+                    if (bytesRead == -1) break; // End of file reached unexpectedly
+
+                    dos.write(buffer, 0, bytesRead);
+                    totalSent += bytesRead;
+                }
+                // Only print when fully done with a chunk to reduce spam
                 System.out.println("[Handler] Sent Chunk: " + start + " - " + end);
             }
 
+        } catch (SocketException e) {
+            // This happens if the user cancels the download. It's normal.
+            System.out.println("[Handler] Client disconnected abruptly (Transfer cancelled).");
         } catch (IOException e) {
             e.printStackTrace();
         } finally {
