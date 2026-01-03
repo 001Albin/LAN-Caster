@@ -1,0 +1,28 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA256
+
+Architectures: amd64
+Components: main
+Date: Sat, 3 Jan 2026 03:49:11 GMT
+Description: Public archive for LAN-Caster
+Origin: LAN-Caster
+Suite: debian
+MD5Sum:
+ 62c96e7f386a29ed8267a4c225cd686b               497 Packages
+ 6a3b21012ea14a8a4681f7424d8fee35               424 Packages.xz
+SHA1:
+ f5c42d8db3510fd8d186e3cbe5559d55e612af8b               497 Packages
+ 1217990ac500cffe6f75beb971bce175558a6631               424 Packages.xz
+SHA256:
+ 673a67ca8b9b0ca5bd6d63381379b13628ff7e5ef5b776107b86eeae059c4e7f               497 Packages
+ 7c521c0e66da3d9fa586284dee93af16f77b0cf7d2a7aa96a34225523d9e66b2               424 Packages.xz
+SHA512:
+ 08a9733186653159ce1c7ea5f81f2b0b3f52a43bd89c0c8c190446a6170c982fdc9794977c91689a704d4b1844e25451155eb2ac579ac5102aa186c626d9ae2c               497 Packages
+ 15f7d3ca3d963fd0ed74a26baf1a0c2404d00e144ebf69a5b1fb85f98563bb17a8a457b39600e167bfb53c1a0139c424136f25f3e14a6e14b63aa7fd9b406727               424 Packages.xz
+-----BEGIN PGP SIGNATURE-----
+Version: BCPG v1.77.00
+
+iF4EARMIAAYFAmlYkbcACgkQf2AOXtbHAXoQkAEAgw6IZ8KsgyASjMp84mXyrV/b
+lPqdaV8GJd1UQWb8jDcBAP6t5TzsW2jVcEeuuanLFn0MPHTTMdzNfJlZrga5JZhn
+=Oi2d
+-----END PGP SIGNATURE-----

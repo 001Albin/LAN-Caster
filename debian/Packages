@@ -1,0 +1,14 @@
+Architecture: amd64
+Built-With: Hydraulic Conveyor
+Depends: libasound2t64 | liboss4-salsa-asound2, libc6, libfreetype6, libgcc-s1, libstdc++6, libx11-6, libxext6, libxi6, libxrender1, libxtst6, zlib1g
+Description: LAN-Caster
+Installed-Size: 79412
+Maintainer: <nobody@nowhere>
+Package: lan-caster
+Priority: optional
+Provides: lan-caster
+Section: misc
+Version: 1.0.0
+Filename: debian/lan-caster_1.0.0_amd64.deb
+Size: 29395740
+SHA256: f332af3efb258144738d32105486aa6818daeceb2e41744b11301cf6403ecdc4
