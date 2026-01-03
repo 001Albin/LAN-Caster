@@ -1,0 +1,202 @@
+/* Modern Professional Stylesheet for LAN-Caster */
+
+* {
+    -fx-font-family: "Segoe UI", "Helvetica Neue", "Arial", sans-serif;
+}
+
+.root {
+    -fx-font-size: 13px;
+    -fx-base: #f9fafb;
+}
+
+/* ===== BUTTONS ===== */
+.button {
+    -fx-padding: 10 20 10 20;
+    -fx-font-weight: 600;
+    -fx-cursor: hand;
+    -fx-text-fill: white;
+    -fx-background-radius: 8;
+    -fx-border-radius: 8;
+}
+
+.button:hover {
+    -fx-opacity: 0.9;
+}
+
+.button:pressed {
+    -fx-opacity: 0.8;
+}
+
+/* ===== TEXT FIELDS ===== */
+.text-field {
+    -fx-padding: 10;
+    -fx-font-size: 13px;
+    -fx-border-color: #e5e7eb;
+    -fx-border-width: 1;
+    -fx-border-radius: 6;
+    -fx-background-radius: 6;
+    -fx-text-fill: #374151;
+    -fx-control-inner-background: #ffffff;
+}
+
+.text-field:focused {
+    -fx-border-color: #3b82f6;
+    -fx-border-width: 2;
+}
+
+.text-field:prompt-text {
+    -fx-text-fill: #9ca3af;
+}
+
+/* ===== LIST VIEW ===== */
+.list-view {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 0;
+}
+
+.list-cell {
+    -fx-padding: 8;
+    -fx-background-color: transparent;
+    -fx-text-fill: #1f2937;
+    -fx-font-size: 13px;
+}
+
+.list-cell:filled:selected {
+    -fx-background-color: #dbeafe;
+    -fx-text-fill: #1e40af;
+    -fx-background-radius: 8;
+}
+
+.list-cell:filled:selected .text {
+    -fx-text-fill: #1e40af;
+}
+
+.list-cell:hover {
+    -fx-background-color: #f3f4f6;
+    -fx-background-radius: 8;
+}
+
+.list-view .placeholder {
+    -fx-text-fill: #9ca3af;
+    -fx-font-size: 13px;
+}
+
+/* ===== SCROLL PANE ===== */
+.scroll-pane {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
+
+.scroll-pane:focused {
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
+}
+
+.scroll-pane .viewport {
+    -fx-background-color: transparent;
+}
+
+.scroll-bar {
+    -fx-font-size: 12;
+}
+
+.scroll-bar:vertical .thumb {
+    -fx-background-color: #cbd5e1;
+    -fx-background-radius: 6;
+}
+
+.scroll-bar:vertical .thumb:hover {
+    -fx-background-color: #94a3b8;
+}
+
+.scroll-bar:vertical .increment-button,
+.scroll-bar:vertical .decrement-button {
+    -fx-padding: 0;
+    -fx-background-color: transparent;
+}
+
+/* ===== PROGRESS BAR ===== */
+.progress-bar {
+    -fx-accent: #3b82f6;
+    -fx-padding: 4;
+}
+
+.progress-bar:indeterminate .bar {
+    -fx-background-color: linear-gradient(from 0% 0% to 100% 0%, #3b82f6, #06b6d4);
+}
+
+/* ===== SPLIT PANE ===== */
+.split-pane {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
+
+.split-pane-divider {
+    -fx-padding: 0;
+    -fx-background-color: #e5e7eb;
+}
+
+.split-pane-divider:hover {
+    -fx-background-color: #3b82f6;
+}
+
+/* ===== CONTEXT MENU ===== */
+.context-menu {
+    -fx-background-color: #ffffff;
+    -fx-border-color: #e5e7eb;
+    -fx-border-width: 1;
+    -fx-border-radius: 6;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.15), 6, 0, 0, 2);
+}
+
+.menu-item:focused {
+    -fx-background-color: #f3f4f6;
+}
+
+.menu-item:pressed {
+    -fx-background-color: #e5e7eb;
+}
+
+/* ===== DIALOG ===== */
+.dialog-pane {
+    -fx-background-color: #ffffff;
+    -fx-border-color: #e5e7eb;
+    -fx-border-width: 1;
+    -fx-border-radius: 12;
+}
+
+.dialog-pane .header-panel {
+    -fx-background-color: #f9fafb;
+}
+
+.dialog-pane .content {
+    -fx-padding: 20;
+}
+
+.dialog-pane .button-bar {
+    -fx-padding: 20;
+    -fx-button-min-width: 80;
+}
+
+/* ===== LABEL ===== */
+.label {
+    -fx-text-fill: #1f2937;
+}
+
+/* ===== TOOLTIP ===== */
+.tooltip {
+    -fx-background-color: #1f2937;
+    -fx-text-fill: white;
+    -fx-border-radius: 6;
+    -fx-background-radius: 6;
+    -fx-padding: 8;
+    -fx-font-size: 12;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.2), 4, 0, 0, 1);
+}
+
+/* ===== FOCUS INDICATOR ===== */
+*:focused {
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
+}

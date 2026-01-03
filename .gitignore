@@ -1,0 +1,34 @@
+# --- Standard Ignores ---
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+# --- IDEs ---
+.idea/
+*.iws
+*.iml
+*.ipr
+.vscode/
+.DS_Store
+
+# --- Build Artifacts ---
+# We ignore the 'output' folder because we copy the final files
+# to the root directory for GitHub Pages.
+output/
+
+# --- LAN-Caster Specific ---
+*.log
+*.tmp
+*.part
+*.crdownload
+
+# --- Test Data ---
+test_files/
+*.mp4
+*.iso
+# Note: *.zip is NOT ignored here because the release includes a zip file.
+
+# --- OS Specifics ---
+Thumbs.db
+desktop.ini

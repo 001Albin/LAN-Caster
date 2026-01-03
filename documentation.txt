@@ -1,0 +1,296 @@
+LAN-Caster — Project & Code Documentation
+Version: 1.1
+Date: 2025-12-27
+Author: Albin Sunny
+
+INTRODUCTION
+This document describes LAN-Caster in detail and explains the role of each Java class and interface in the codebase, the public methods they expose, and why those methods are used. It is intended as both developer documentation and an exam/viva reference. The code is not modified by this document — it only reads and documents the existing implementation.
+
+CONTENTS
+1. Executive summary (brief)
+2. Project layout (file map)
+3. For each Java class: purpose, key fields, public methods (signatures + explanations), threading/usage notes
+4. Protocol & Control Flow (how peers negotiate and transfer data)
+5. Important APIs and why they are used
+6. Chunking, parallelism, and resumability (how chunks are computed and written)
+7. Performance tuning checklist (practical knobs and why they matter)
+8. Next steps & recommended features
+
+1. EXECUTIVE SUMMARY
+(see earlier version for a short summary). LAN-Caster is a P2P LAN file transfer engine built with core Java (Java 17), focusing on zero-copy transfer and parallelism to maximize local-network throughput while being resilient and usable.
+
+2. PROJECT LAYOUT (file map)
+src/main/java/org/develop/lancaster/
+  core/
+    discovery/DiscoveryService.java
+    network/Sender.java
+    network/ClientHandler.java
+    network/Receiver.java
+    network/TestClient.java
+    transfer/TransferManager.java
+    transfer/ChunkTransferTask.java
+    transfer/ProgressListener.java
+    util/NetworkUtils.java
+  ui/MainWindow.java
+  Main.java
+
+3. DETAILED CLASS & METHOD REFERENCE
+Note: method signatures shown as they appear in the code; descriptions explain behavior and intended usage.
+
+3.1 org.develop.lancaster.core.discovery.DiscoveryService
+- Purpose: Periodically broadcast a short UDP multicast "HELLO" message with a unique ID and simultaneously listen for other peers announcing themselves. Used by the UI to build the list of peers on the LAN.
+- Key fields:
+  - MULTICAST_GROUP_IP (String) — multicast group used for discovery (224.0.0.1)
+  - PORT (int) — discovery port (8888)
+  - myUniqueId (String) — locally generated UUID used to ignore self messages
+  - volatile boolean running — controls thread loop
+  - Consumer<String> onPeerFound — callback to notify the UI of discovered peer IPs
+- Constructors and public methods:
+  - public DiscoveryService()
+    - Initializes myUniqueId.
+  - public void setOnPeerFound(Consumer<String> callback)
+    - Register a callback that receives a peer IP string when another node is found.
+  - public void run()
+    - Implements Runnable. Joins multicast group and runs a loop receiving UDP datagrams, parses messages of format "LAN-CASTER_HELLO|<uuid>", and calls onPeerFound.accept(peerIp) when a new peer is detected (skips messages originating from this instance's UUID).
+    - Important: Must be executed on a separate thread (the UI passes the callback which uses Platform.runLater to safely update the JavaFX UI).
+  - public void broadcastPresence()
+    - Sends a one-shot UDP multicast packet containing "LAN-CASTER_HELLO|<myUniqueId>". Intended to be called periodically (e.g., every 3 seconds) from a background thread.
+
+Threading/Notes: run() blocks on socket.receive() and therefore should execute in a daemon thread. setOnPeerFound connects discovery to UI safely.
+
+3.2 org.develop.lancaster.core.util.NetworkUtils
+- Purpose: Locate an appropriate NetworkInterface (likely Wi-Fi) for multicast operations.
+- Public methods:
+  - public static NetworkInterface findInterface() throws SocketException
+    - Iterates system network interfaces, skipping loopback and down interfaces, and returns the first interface that is up, supports multicast, and has an IPv4 address. Throws SocketException if none found.
+- Usage: DiscoveryService calls this to ensure MulticastSocket joins target interface instead of the wrong adapter.
+
+3.3 org.develop.lancaster.core.network.Sender
+- Purpose: Acts as the server process that hosts a file and accepts incoming client connections for metadata and chunk requests. Delegates per-connection work to ClientHandler.
+- Key fields:
+  - PORT (int)
+  - THREAD_POOL_SIZE (int)
+  - volatile running (boolean)
+  - ServerSocketChannel serverSocketChannel
+  - ExecutorService pool
+  - Function<Socket, ProgressListener> listenerFactory — a factory that the UI provides to create per-connection ProgressListener instances linked to UI components.
+- Constructors and public methods:
+  - public Sender()
+    - Default constructor, calls the main constructor with null.
+  - public Sender(Function<Socket, ProgressListener> listenerFactory)
+    - Accepts a factory that will be used by ClientHandler to produce a ProgressListener for CHUNK transfers.
+  - public void startServing(File file)
+    - Opens a ServerSocketChannel bound to PORT and loops accepting SocketChannel connections. For each connection, submits a ClientHandler task to the thread pool. Uses the SocketChannel accept path to enable zero-copy transfer via transferTo on a channel.
+    - This method blocks while running and should be invoked on a background thread (the UI triggers it in a new thread).
+  - public void stop()
+    - Stops the server: closes the ServerSocketChannel and shuts down the pool.
+
+Notes: Listener factory is used so the UI can create ProgressBars associated with the remote peer only when needed for CHUNK transfers. Passing SocketChannel to ClientHandler enables optimal zero-copy.
+
+3.4 org.develop.lancaster.core.network.ClientHandler
+- Purpose: Handles a single client connection. Parses the simple control protocol (METADATA, CHUNK|start|end), responds with metadata or streams the requested byte range using FileChannel.transferTo. Creates a ProgressListener for CHUNK transfers via the listenerFactory only when needed to avoid duplicate UI cards created by metadata connections.
+- Key fields:
+  - clientSocket (Socket)
+  - fileToSend (File)
+  - socketChannelField (SocketChannel) — optional; if provided it's used as the WritableByteChannel backing the connection
+  - fallbackListener (ProgressListener) — optional direct listener
+  - listenerFactory (Function<Socket, ProgressListener>) — optional factory to create a per-connection listener
+- Constructors:
+  - public ClientHandler(Socket socket, String filePath, ProgressListener listener)
+    - Backwards-compatible constructor that accepts a direct ProgressListener.
+  - public ClientHandler(Socket socket, String filePath, Function<Socket, ProgressListener> listenerFactory)
+    - Accepts a factory; stores socket channel reference.
+  - public ClientHandler(SocketChannel sc, String filePath, Object listenerOrFactory)
+    - Used by Sender to pass a SocketChannel directly; stores the SocketChannel for transferTo.
+  - public ClientHandler(Socket socket, String filePath, Object listenerOrFactory)
+    - Flexible constructor used by earlier calling code; stores socket channel if available.
+- Main runtime method:
+  - public void run()
+    - Implements Runnable. Steps:
+      1. Wrap socket streams in DataInputStream/DataOutputStream.
+      2. Read a UTF command: either "METADATA" or "CHUNK|<start>|<end>".
+      3. If METADATA: write file name and long length and flush.
+      4. If CHUNK: parse start/end, tune socket (setTcpNoDelay, setSendBufferSize), create an activeListener using listenerFactory.apply(socket) (or fallbackListener), then use FileChannel.transferTo in repeated chunked calls to stream the requested range to the connection's WritableByteChannel (SocketChannel preferred for zero-copy). After each transferTo call, notify the listener with cumulative bytes sent for that chunk.
+    - Uses chunked transferTo calls (configurable chunk size) to produce frequent progress notifications while keeping high throughput.
+
+Threading/Notes: ClientHandler is executed by an ExecutorService worker thread. It performs blocking I/O but uses zero-copy where possible to minimize CPU.
+
+3.5 org.develop.lancaster.core.network.Receiver (example)
+- Purpose: A simple standalone example of a client that connects to a sender, reads metadata, acknowledges readiness, and reads file bytes via DataInputStream into a FileOutputStream. It demonstrates the metadata handshake and sequential receiving logic.
+- Key method:
+  - public static void main(String[] args)
+    - Connects to localhost:5000, reads name and size, writes READY through DataOutputStream, and reads bytes until fileSize is reached and saves them to a local file.
+
+Notes: This is primarily educational/testing code; TransferManager/ChunkTransferTask implement the production client logic.
+
+3.6 org.develop.lancaster.core.network.TestClient
+- Purpose: Quick local tests for the protocol. Contains a main method that connects for metadata and for a tiny chunk request to validate server responses.
+- Key method:
+  - public static void main(String[] args)
+    - Demonstrates METADATA and CHUNK requests and reads the responses.
+
+3.7 org.develop.lancaster.core.transfer.ProgressListener
+- Purpose: Lightweight functional interface that bridges background transfer code and UI updates.
+- Definition:
+  - public interface ProgressListener { void onProgress(long currentBytes, long totalBytes); }
+- Usage: Implemented by UI-side code to update ProgressBar/percent labels. Implementations are designed to be thread-safe and typically throttle updates to avoid flooding JavaFX application thread.
+
+3.8 org.develop.lancaster.core.transfer.ChunkTransferTask
+- Purpose: Downloads a specific byte range [startByte, endByte) from a remote Sender and writes to the correct position in a shared destination file using RandomAccessFile + FileChannel. It uses a SocketChannel and FileChannel.transferFrom for efficient receiving where possible.
+- Key fields:
+  - serverIp (String), port (int)
+  - startByte (long), endByte (long)
+  - destinationFile (File), taskId (int)
+  - listener (ProgressListener) — used to report chunk-level progress to TransferManager which aggregates
+- Constructor:
+  - public ChunkTransferTask(String serverIp, int port, File destinationFile, long start, long end, int id, ProgressListener listener)
+    - Stores parameters for the chunk worker.
+- Main runtime method:
+  - public Boolean call() throws Exception
+    - Implements Callable<Boolean>. Steps:
+      1. Open a SocketChannel, connect to serverIp:port and tune socket (TcpNoDelay and receive buffer size).
+      2. Send the CHUNK request as writeUTF("CHUNK|start|end") over the connection's output stream.
+      3. Position destination FileChannel at startByte.
+      4. Loop: call fileChannel.transferFrom(sc, fileChannel.position(), toRead) to receive data directly into file (zero-copy), update totalRead, and call listener.onProgress(totalRead, expectedSize) per iteration.
+      5. Return true on success.
+
+Threading/Notes: ChunkTransferTask is executed by a worker thread from TransferManager. Using transferFrom minimizes copies and leverages kernel paths for maximal throughput.
+
+3.9 org.develop.lancaster.core.transfer.TransferManager
+- Purpose: High-level client-side coordinator that requests metadata from a sender, pre-allocates the output file, splits the file into N chunks, and concurrently downloads each chunk via ChunkTransferTask instances. Aggregates progress across parts and reports a single progress stream to the UI.
+- Key fields:
+  - PORT (int)
+  - ExecutorService executor (cached pool)
+- Public method:
+  - public void downloadFile(String peerIp, String saveDir, ProgressListener uiListener)
+    - Steps:
+      1. Open a lightweight control connection and request "METADATA" to get filename and fileSize.
+      2. Pre-allocate local file (RandomAccessFile.setLength(fileSize)).
+      3. Decide parts: based on available processors (cores) and a safe cap (up to 8 parts by default), compute baseChunk size and generate start/end for each part.
+      4. For each part, create a ChunkTransferTask with a per-part ProgressListener that reports deltas and updates an AtomicLong globalDownloaded. The uiListener receives aggregated bytes and updates the UI.
+      5. Wait for all parts to complete and call uiListener.onProgress(fileSize, fileSize) at the end to ensure 100% is shown.
+
+Threading/Notes: TransferManager uses a partsExecutor (fixed-size pool) for part downloads and aggregates progress using AtomicLongs to avoid races.
+
+3.10 org.develop.lancaster.ui.MainWindow
+- Purpose: JavaFX application presenting a peer list and a transfer dashboard. Lets the user send files (host) or download files from peers. Creates UI cards for each transfer and links background transfers to progress bars using ProgressListener.
+- Key methods and responsibilities:
+  - public void start(Stage primaryStage)
+    - JavaFX entry point. Builds UI layout (peer list on left, dashboard on right), starts DiscoveryService, and shows the stage.
+  - private VBox createPeerListPane()
+    - Builds the left pane ListView and returns container.
+  - private VBox createDashboardPane(Stage stage)
+    - Builds the transfer activity dashboard with ScrollPane and two buttons: Send File and Download from Peer. Contains event handlers that:
+      * For Send File: opens FileChooser, starts a Sender with a listenerFactory that creates UI cards and returns a ProgressListener for each connection; uses a FutureTask + Platform.runLater to ensure UI card exists before transfer starts (fixes 0% race).
+      * For Download: opens DirectoryChooser and calls TransferManager.downloadFile with a UI-linked ProgressListener that updates the TransferUIComponents.
+  - private void updateProgress(TransferUIComponents ui, long current, long total)
+    - Thread-safe UI progress update method (wraps UI updates in Platform.runLater). Sets ProgressBar progress, updates percent label, and marks Completed when progress >= 1.0.
+  - private TransferUIComponents addTransferCard(String filename, String peerIp, String type, long totalBytes)
+    - Creates a visual card (VBox) containing filename, IP, status label, progress bar, and percent label. Adds it to the dashboard in the UI thread and returns the UI handle object.
+  - private ListView<String> getListView(Stage stage)
+    - A convenience helper to locate the peer ListView in the left pane (used by button handlers).
+  - private void startDiscovery()
+    - Instantiates DiscoveryService, registers onPeerFound callback that updates the peerList (Platform.runLater), and starts discovery and periodic broadcast threads.
+  - private void showAlert(Alert.AlertType type, String title, String content)
+    - Convenience to show modal alert dialogs on the FX thread.
+  - public void stop()
+    - Called on application exit; stops Sender if running and exits.
+
+UI helper class:
+  - private static class TransferUIComponents {
+      ProgressBar progressBar;
+      Label percentLabel;
+      Label statusLabel;
+      String transferType;
+      // Holds references to the UI widgets for a transfer card so background threads can update them via Platform.runLater.
+    }
+
+Threading/Notes: The UI never does blocking network I/O. All heavy work happens on background Executors/Threads; progress updates are routed to the FX thread using Platform.runLater.
+
+3.11 org.develop.lancaster.Main
+- Minimal placeholder class in this project; actual JavaFX application is MainWindow.
+
+4. PROTOCOL & CONTROL FLOW (detailed)
+- Discovery: UDP Multicast. Each node periodically broadcasts "LAN-CASTER_HELLO|<uuid>" and listens using MulticastSocket on 224.0.0.1:8888. When a peer receives a HELLO with a different UUID, it extracts the IP address and reports it to the UI.
+- Metadata phase (client-driven): Client opens TCP connection and writes "METADATA" (UTF). Server responds with writeUTF(filename); writeLong(filesize). Client uses this to create destination filename and pre-allocate file.
+- Chunk request phase: Client opens a (possibly new) TCP connection and writes "CHUNK|<start>|<end>". Server streams exactly (end-start) bytes for that range. The server uses FileChannel.transferTo to stream from disk to socket; client uses transferFrom to write directly to file.
+- Resumption: Because the protocol allows arbitrary start/end ranges, a receiver can record how many bytes it already has for each chunk and request only the remaining range after reconnect.
+
+5. IMPORTANT APIS (why used)
+- java.nio.channels.FileChannel.transferTo/transferFrom — kernel-assisted zero-copy transfer. Primary reason: avoid copying file contents into user-space Java heap, reduce GC pressure, and increase throughput.
+- java.nio.channels.SocketChannel / ServerSocketChannel — allow channel-based sockets; transferTo/transferFrom interoperate with channels.
+- java.util.concurrent.ExecutorService — manage a pool of worker threads for client and server operations.
+- java.io.RandomAccessFile — allows writing to specific offsets in the destination file from multiple parallel workers.
+- java.net.MulticastSocket — used for peer discovery without a central server.
+- javafx.application.Platform.runLater — required to update JavaFX UI elements from background threads safely.
+
+6. CHUNK SPLITTING & WRITE STRATEGY
+- Split algorithm: baseChunk = fileSize / parts; for i: start = i*baseChunk; end = (i==parts-1)?fileSize:start+baseChunk.
+- Pre-allocation: RandomAccessFile.setLength(fileSize) creates a file of the exact length to avoid fragmentation and allow safe concurrent writes.
+- SSD vs HDD: For SSDs, parallel writes are safe and improve throughput. For HDDs, many random writes can cause head thrashing; a fallback sequential single-threaded download or smaller part count is recommended.
+
+7. PERFORMANCE TUNING CHECKLIST
+- Use 5GHz Wi-Fi or wired gigabit.
+- Increase socket buffers: setSendBufferSize, setReceiveBufferSize.
+- TcpNoDelay: may help or harm; for bulk transfers it reduces delay in some stacks.
+- Adjust chunk sizes for transferTo/transferFrom (16MB–64MB often performs well).
+- Increase parts (parallel connections) up to 8 or more for fast networks and SSD targets; reduce for HDDs.
+- Measure: log instantaneous MB/s per part and aggregated; adapt parts dynamically if needed.
+
+8. NEXT STEPS & RECOMMENDATIONS
+- Implement persistent TransferState serialization (per-chunk offsets) to enable true resumability across app restarts.
+- Add drive detection to choose adaptive threading (SSD vs HDD) automatically.
+- Add an experimental auto-tuner that ramps part count and measures throughput in the first N seconds.
+- Provide a config UI for advanced users to set parts, chunk size, and buffer sizes.
+
+APPENDIX A — METHODS USED: QUICK REFERENCE
+(Alphabetical by class)
+- ClientHandler
+  - ClientHandler(Socket, String, ProgressListener)
+  - ClientHandler(Socket, String, Function<Socket, ProgressListener>)
+  - ClientHandler(Socket, String, Object)
+  - ClientHandler(SocketChannel, String, Object)
+  - void run()
+- DiscoveryService
+  - DiscoveryService()
+  - void setOnPeerFound(Consumer<String>)
+  - void run()
+  - void broadcastPresence()
+- NetworkUtils
+  - static NetworkInterface findInterface() throws SocketException
+- Sender
+  - Sender()
+  - Sender(Function<Socket, ProgressListener>)
+  - void startServing(File)
+  - void stop()
+- TestClient / Receiver
+  - public static void main(String[] args)
+- ChunkTransferTask
+  - ChunkTransferTask(String serverIp, int port, File destinationFile, long start, long end, int id, ProgressListener listener)
+  - Boolean call() throws Exception
+- TransferManager
+  - void downloadFile(String peerIp, String saveDir, ProgressListener uiListener)
+- ProgressListener
+  - void onProgress(long currentBytes, long totalBytes)
+- MainWindow (UI)
+  - void start(Stage)
+  - VBox createPeerListPane()
+  - VBox createDashboardPane(Stage)
+  - void updateProgress(TransferUIComponents, long current, long total)
+  - TransferUIComponents addTransferCard(String filename, String peerIp, String type, long totalBytes)
+  - ListView<String> getListView(Stage)
+  - void startDiscovery()
+  - void showAlert(Alert.AlertType, String, String)
+  - void stop()
+  - public static void main(String[] args)
+
+APPENDIX B — THREADS & CONCURRENCY PATTERN SUMMARY
+- Server: Sender uses an ExecutorService thread pool to run each ClientHandler concurrently.
+- Client: TransferManager uses an ExecutorService to run ChunkTransferTask instances; each chunk uses its own socket connection and writes disjoint regions in the output file.
+- Discovery: runs on a background thread for UDP recv/send.
+- UI: All UI changes are performed with Platform.runLater to ensure JavaFX application thread safety.
+
+CONCLUSION
+This expanded document maps the codebase to architectural responsibilities and explains every Java class and method used in the project. It includes detailed rationale for key implementation choices (zero-copy I/O, chunking, parallelism) and provides a practical path for further improvements like resumability, adaptive tuning, and security.
+
+End of document
