@@ -1,15 +1,15 @@
 # 📡 LAN-Caster
 
-LAN-Caster is a high-speed, Peer-to-Peer (P2P) file transfer application designed for local networks. It allows users to send large files directly between devices without relying on internet speed or cloud servers.
+LAN-Caster is a high-speed, Peer-to-Peer (P2P) file transfer desktop application designed for local networks. It allows users to send large files directly between devices without relying on the internet, cloud servers, or third-party web frameworks.
 
-Built with **Java**, **Spring Boot**, and **JavaFX**.
+Built with **Core Java**, **JavaFX**, and **Maven**.
 
 ## 🚀 Features
-* **Zero Internet Required:** Transfers happen over your Local Area Network (LAN).
-* **High Speed:** Limited only by your router speed (often 10x faster than internet).
-* **Cross-Platform:** Works seamlessly on Windows and Linux (Kali, Ubuntu, Debian).
-* **No File Size Limit:** Send huge files (GBs or TBs) without restrictions.
-* **Secure:** Direct device-to-device connection.
+* **Zero Internet Required:** Transfers happen purely over your Local Area Network (LAN).
+* **Blazing Fast:** Uses direct TCP Sockets for maximum router speed (often 100MB/s+).
+* **Cross-Platform:** Native installers for Windows (.msix) and Linux (.deb).
+* **Lightweight:** Built on standard Java libraries without heavy web frameworks.
+* **Secure:** Data goes straight from Sender to Receiver; no middleman.
 
 ---
 
@@ -18,7 +18,7 @@ Built with **Java**, **Spring Boot**, and **JavaFX**.
 ### 🪟 Windows
 1.  **[Download the Installer (.msix)](https://001albin.github.io/LAN-Caster/lan-caster-1.0.0.x64.msix)**
 2.  Double-click the file.
-3.  Click **Install**.
+3.  Click **Install** (Windows will handle the dependencies).
 4.  Launch "LAN-Caster" from your Start Menu.
 
 ### 🐧 Linux (Debian/Ubuntu/Kali)
