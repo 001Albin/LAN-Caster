@@ -1,5 +1,10 @@
 package org.develop.lancaster.ui;
 
+import javafx.animation.Animation;
+import javafx.animation.FadeTransition;
+import javafx.animation.KeyFrame;
+import javafx.animation.PauseTransition;
+import javafx.animation.Timeline;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
@@ -7,719 +12,872 @@ import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
-import javafx.scene.control.*;
+import javafx.scene.control.Alert;
+import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
+import javafx.scene.control.ChoiceBox;
+import javafx.scene.control.ContextMenu;
+import javafx.scene.control.Dialog;
+import javafx.scene.control.Label;
+import javafx.scene.control.ListCell;
+import javafx.scene.control.ListView;
+import javafx.scene.control.MenuItem;
+import javafx.scene.control.ScrollPane;
+import javafx.scene.control.SplitPane;
+import javafx.scene.control.TextField;
+import javafx.scene.control.TextInputDialog;
+import javafx.scene.control.Tooltip;
+import javafx.scene.image.Image;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
-import javafx.scene.layout.*;
-import javafx.scene.paint.Color;
-import javafx.scene.text.Font;
+import javafx.scene.input.TransferMode;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.GridPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
+import javafx.scene.layout.StackPane;
+import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
-import javafx.stage.StageStyle; // Added for Undecorated style
+import javafx.util.Duration;
 import org.develop.lancaster.core.discovery.DiscoveryService;
 import org.develop.lancaster.core.discovery.PeerInfo;
-import org.develop.lancaster.core.network.Sender;
-import org.develop.lancaster.core.transfer.TransferManager;
+import org.develop.lancaster.core.network.Protocol;
+import org.develop.lancaster.core.transfer.TransferEngine;
+import org.develop.lancaster.core.transfer.TransferSession;
 import org.develop.lancaster.core.util.Config;
 
 import java.io.File;
-import java.net.Socket;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URL;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.FutureTask;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-public class MainWindow extends Application {
+public class MainWindow extends Application implements TransferCard.Actions {
 
     private static final Logger logger = Logger.getLogger(MainWindow.class.getName());
 
+    private Stage stage;
+    private TransferEngine engine;
+    private DiscoveryService discovery;
+
+    // FX-thread only state
     private final ObservableList<PeerInfo> peerList = FXCollections.observableArrayList();
-    private DiscoveryService discoveryService;
-    private VBox progressPanel;
-    private Sender currentSender;
-    private final Map<String, TransferUIComponents> activeTransfers = new ConcurrentHashMap<>();
-    private final Map<String, AtomicLong> activeProgress = new ConcurrentHashMap<>();
+    private final Map<String, PeerInfo> peersByKey = new LinkedHashMap<>();
+    private final Set<String> selectedKeys = new LinkedHashSet<>();
+    private final Map<String, TransferCard> cards = new HashMap<>();
 
-    // Stats tracking
-    private Label activeTransfersLabel;
+    private ListView<PeerInfo> peerListView;
+    private VBox transfersBox;
+    private Label emptyTransfersLabel;
+    private Button sendBtn;
+    private Label peerCountLabel;
+    private Label discoveryStatusLabel;
+    private Label portLabel;
+    private Label activeLabel;
     private Label speedLabel;
-    private Label filesCompletedLabel;
-    private AtomicLong totalFilesCompleted = new AtomicLong(0);
-    private AtomicLong totalBytesTransferred = new AtomicLong(0);
-    private long statsStartTime = System.currentTimeMillis();
-
-    // Window Dragging Offsets
-    private double xOffset = 0;
-    private double yOffset = 0;
-
-    // === MODERN COLOR PALETTE ===
-    private static final String PRIMARY_COLOR = "#1f2937";
-    private static final String SECONDARY_COLOR = "#3b82f6";
-    private static final String SUCCESS_COLOR = "#10b981";
-    private static final String WARNING_COLOR = "#f59e0b";
-    private static final String LIGHT_BG = "#f9fafb";
-    private static final String CARD_BG = "#ffffff";
-    private static final String BORDER_COLOR = "#e5e7eb";
-
-    // === MODERN STYLES ===
-    private static final String HEADER_STYLE = "-fx-font-size: 24px; -fx-font-weight: bold; -fx-text-fill: " + PRIMARY_COLOR + ";";
-    private static final String BODY_TEXT_STYLE = "-fx-font-size: 13px; -fx-text-fill: #6b7280;";
-
-    private static final String CARD_STYLE = "-fx-background-color: " + CARD_BG + "; "
-            + "-fx-border-color: " + BORDER_COLOR + "; "
-            + "-fx-border-width: 1; "
-            + "-fx-border-radius: 12; "
-            + "-fx-background-radius: 12; "
-            + "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.08), 8, 0, 0, 2);";
-
-    // Style for selected peer
-    private static final String SELECTED_CARD_STYLE = "-fx-background-color: #eff6ff; " // Very light blue
-            + "-fx-border-color: " + SECONDARY_COLOR + "; "
-            + "-fx-border-width: 2; "
-            + "-fx-border-radius: 12; "
-            + "-fx-background-radius: 12;";
-
-    private static final String BUTTON_PRIMARY_STYLE = "-fx-background-color: " + SECONDARY_COLOR + "; "
-            + "-fx-text-fill: white; "
-            + "-fx-font-weight: 600; "
-            + "-fx-cursor: hand; "
-            + "-fx-background-radius: 8; "
-            + "-fx-padding: 10 20 10 20; "
-            + "-fx-font-size: 13px;";
-
-    private static final String BUTTON_SUCCESS_STYLE = "-fx-background-color: " + SUCCESS_COLOR + "; "
-            + "-fx-text-fill: white; "
-            + "-fx-font-weight: 600; "
-            + "-fx-cursor: hand; "
-            + "-fx-background-radius: 8; "
-            + "-fx-padding: 10 20 10 20; "
-            + "-fx-font-size: 13px;";
-
-    private static final String TEXT_FIELD_STYLE = "-fx-font-size: 13px; "
-            + "-fx-padding: 10; "
-            + "-fx-border-color: " + BORDER_COLOR + "; "
-            + "-fx-border-width: 1; "
-            + "-fx-border-radius: 6; "
-            + "-fx-background-radius: 6; "
-            + "-fx-text-fill: #374151;";
-
-    // Style for window control buttons
-    private static final String WINDOW_BTN_STYLE = "-fx-background-color: transparent; -fx-text-fill: white; -fx-font-size: 14px; -fx-cursor: hand;";
+    private Label completedLabel;
+    private Label toastLabel;
+    private PauseTransition toastHider;
+    private int completedCount = 0;
 
     @Override
     public void start(Stage primaryStage) {
-        // 1. REMOVE DEFAULT OS TITLE BAR
-        primaryStage.initStyle(StageStyle.UNDECORATED);
+        this.stage = primaryStage;
+
+        engine = new TransferEngine(Config.getInstanceId(), Config.getDeviceName());
+        engine.setSessionCreatedListener(s -> Platform.runLater(() -> onSessionCreated(s)));
+        engine.setPairingHandler(req -> {
+            CompletableFuture<Boolean> answer = new CompletableFuture<>();
+            Platform.runLater(() -> showPairingRequest(req, answer));
+            return answer;
+        });
+        engine.setUnpairedOfferListener(msg -> Platform.runLater(() -> toast(msg)));
+        String startupError = null;
+        try {
+            engine.start();
+        } catch (IOException e) {
+            startupError = "Could not open a listening port: " + e.getMessage();
+            logger.log(Level.SEVERE, startupError, e);
+        }
+
+        discovery = new DiscoveryService(Config.getInstanceId(), Config.getDeviceName(), engine::getPort);
+        discovery.setOnPeerFound(pi -> Platform.runLater(() -> onPeerSeen(pi)));
+        discovery.start();
 
         BorderPane root = new BorderPane();
-        root.setStyle("-fx-background-color: " + LIGHT_BG + "; -fx-border-color: #374151; -fx-border-width: 1;"); // Add border since we lost window border
+        root.getStyleClass().add("app-root");
+        root.setTop(createHeader());
 
-        // Pass primaryStage to createTopBar so we can control min/max/close
-        HBox topBar = createTopBar(primaryStage);
-        root.setTop(topBar);
+        SplitPane split = new SplitPane(createPeerPane(), createTransferPane());
+        split.setDividerPositions(0.32);
+        root.setCenter(split);
 
-        VBox leftPane = createPeerListPane();
-        VBox rightPane = createDashboardPane(primaryStage);
+        toastLabel = new Label();
+        toastLabel.getStyleClass().add("toast");
+        toastLabel.setVisible(false);
+        toastLabel.setMouseTransparent(true);
+        StackPane.setAlignment(toastLabel, Pos.BOTTOM_CENTER);
+        StackPane.setMargin(toastLabel, new Insets(0, 0, 24, 0));
 
-        SplitPane splitPane = new SplitPane();
-        splitPane.getItems().addAll(leftPane, rightPane);
-        splitPane.setDividerPositions(0.3);
-        splitPane.setStyle("-fx-background-color: transparent; -fx-padding: 0;");
-        SplitPane.setResizableWithParent(leftPane, true);
-        SplitPane.setResizableWithParent(rightPane, true);
+        StackPane stack = new StackPane(root, toastLabel);
+        Scene scene = new Scene(stack, 1180, 760);
+        URL css = getClass().getResource("/org/develop/lancaster/modern.css");
+        if (css != null) scene.getStylesheets().add(css.toExternalForm());
 
-        root.setCenter(splitPane);
-
-        root.setOnMouseClicked(event -> {
-            if (!isClickOnPeerList(event.getSceneX(), event.getSceneY(), primaryStage)) {
-                ListView<PeerInfo> listView = getListView(primaryStage);
-                listView.getSelectionModel().clearSelection();
+        // Drag & drop files anywhere in the window to send them.
+        stack.setOnDragOver(e -> {
+            if (e.getDragboard().hasFiles()) e.acceptTransferModes(TransferMode.COPY);
+            e.consume();
+        });
+        stack.setOnDragDropped(e -> {
+            if (e.getDragboard().hasFiles()) {
+                sendFiles(e.getDragboard().getFiles());
+                e.setDropCompleted(true);
             }
+            e.consume();
         });
 
-        startDiscovery();
-
-        Scene scene = new Scene(root, 1200, 800);
         primaryStage.setTitle("LAN-Caster");
+        try (InputStream icon = getClass().getResourceAsStream("/org/develop/lancaster/logo.png")) {
+            if (icon != null) primaryStage.getIcons().add(new Image(icon));
+        } catch (IOException ignored) {}
         primaryStage.setScene(scene);
         primaryStage.setMinWidth(900);
         primaryStage.setMinHeight(600);
+        primaryStage.setOnCloseRequest(e -> stop());
         primaryStage.show();
+
+        Timeline ticker = new Timeline(new KeyFrame(Duration.millis(300), e -> tick()));
+        ticker.setCycleCount(Animation.INDEFINITE);
+        ticker.play();
+
+        if (startupError != null) {
+            showError("Network error", startupError + "\n\nOther devices will not be able to send you files.");
+        }
     }
 
-    private boolean isClickOnPeerList(double sceneX, double sceneY, Stage stage) {
-        ListView<PeerInfo> listView = getListView(stage);
-        if (listView == null) return false;
-        javafx.geometry.Bounds bounds = listView.localToScene(listView.getBoundsInLocal());
-        return bounds.contains(sceneX, sceneY);
-    }
+    // ------------------------------------------------------------------ header
 
-    // UPDATED: Added Stage parameter for controls and dragging
-    private HBox createTopBar(Stage stage) {
-        HBox topBar = new HBox();
-        topBar.setStyle("-fx-background-color: " + PRIMARY_COLOR + "; -fx-padding: 15 20 15 20;");
-        topBar.setAlignment(Pos.CENTER_LEFT);
-        topBar.setSpacing(20);
+    private HBox createHeader() {
+        HBox bar = new HBox(16);
+        bar.getStyleClass().add("header-bar");
+        bar.setAlignment(Pos.CENTER_LEFT);
 
-        // Make window draggable
-        topBar.setOnMousePressed(event -> {
-            xOffset = event.getSceneX();
-            yOffset = event.getSceneY();
+        Label title = new Label("LAN-Caster");
+        title.getStyleClass().add("app-title");
+
+        Label nameLbl = new Label("This device:");
+        nameLbl.getStyleClass().add("header-label");
+
+        TextField nameField = new TextField(Config.getDeviceName());
+        nameField.getStyleClass().add("header-field");
+        nameField.setPromptText("Device name");
+        nameField.setPrefWidth(200);
+        Button saveName = new Button("Save");
+        saveName.getStyleClass().addAll("btn", "btn-secondary");
+        saveName.setOnAction(e -> {
+            String n = sanitizeName(nameField.getText(), 32);
+            Config.setDeviceName(n);
+            String effective = Config.getDeviceName();
+            nameField.setText(effective);
+            engine.setDeviceName(effective);
+            discovery.setLocalName(effective);
+            toast("Device name saved: " + effective);
         });
-        topBar.setOnMouseDragged(event -> {
-            stage.setX(event.getScreenX() - xOffset);
-            stage.setY(event.getScreenY() - yOffset);
-        });
-
-        Label title = new Label("⚡ LAN-Caster");
-        title.setStyle("-fx-font-size: 20px; -fx-font-weight: bold; -fx-text-fill: white;");
-
-        Label deviceLabel = new Label("Device Name:");
-        deviceLabel.setStyle("-fx-text-fill: white; -fx-font-weight: 600;");
-
-        TextField deviceNameField = new TextField();
-        deviceNameField.setStyle(TEXT_FIELD_STYLE + " -fx-control-inner-background: #f3f4f6;");
-        deviceNameField.setPromptText("e.g., John's Laptop");
-        deviceNameField.setPrefWidth(200);
-        String current = Config.getDeviceName();
-        deviceNameField.setText(current == null ? "" : current);
-
-        Button saveDeviceBtn = new Button("Save");
-        saveDeviceBtn.setStyle(BUTTON_PRIMARY_STYLE);
-        saveDeviceBtn.setPrefWidth(70);
-        saveDeviceBtn.setOnAction(e -> {
-            String newName = sanitizeName(deviceNameField.getText(), 32);
-            if (newName != null && newName.length() == 0) newName = null;
-            Config.setDeviceName(newName == null ? "" : newName);
-            if (discoveryService != null) discoveryService.setLocalName(newName);
-            showNotification("Device name updated to: " + (newName == null ? "(default)" : newName));
-        });
+        nameField.setOnAction(e -> saveName.fire());
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        // 2. CUSTOM WINDOW CONTROLS
-        HBox windowControls = new HBox(10);
-        windowControls.setAlignment(Pos.CENTER_RIGHT);
+        portLabel = new Label();
+        portLabel.getStyleClass().add("header-meta");
+        portLabel.setText(engine.getPort() > 0 ? "Listening on port " + engine.getPort() : "Not listening");
+        Tooltip.install(portLabel, new Tooltip("Other devices connect to this TCP port. Allow it in your firewall if transfers fail."));
 
-        Button minBtn = new Button("—");
-        minBtn.setStyle(WINDOW_BTN_STYLE);
-        minBtn.setOnAction(e -> stage.setIconified(true));
+        Button settings = new Button("Settings");
+        settings.getStyleClass().addAll("btn", "btn-header");
+        settings.setOnAction(e -> showSettings());
 
-        Button maxBtn = new Button("☐");
-        maxBtn.setStyle(WINDOW_BTN_STYLE);
-        maxBtn.setOnAction(e -> stage.setMaximized(!stage.isMaximized()));
-
-        Button closeBtn = new Button("✕");
-        closeBtn.setStyle(WINDOW_BTN_STYLE + " -fx-text-fill: #ff6b6b;"); // Red tint for close
-        closeBtn.setOnAction(e -> stop());
-
-        windowControls.getChildren().addAll(minBtn, maxBtn, closeBtn);
-
-        // Add everything to top bar
-        topBar.getChildren().addAll(title, deviceLabel, deviceNameField, saveDeviceBtn, spacer, windowControls);
-        return topBar;
+        bar.getChildren().addAll(title, nameLbl, nameField, saveName, spacer, portLabel, settings);
+        return bar;
     }
 
-    private VBox createPeerListPane() {
-        VBox container = new VBox();
-        container.setStyle("-fx-background-color: " + LIGHT_BG + ";");
-        container.setPadding(new Insets(20));
-        container.setSpacing(15);
+    // ------------------------------------------------------------------ peers
 
-        Label header = new Label("🌐 Network Peers");
-        header.setStyle(HEADER_STYLE);
+    private VBox createPeerPane() {
+        VBox pane = new VBox(12);
+        pane.getStyleClass().add("side-pane");
+        pane.setPadding(new Insets(18));
 
-        HBox searchBox = new HBox();
-        searchBox.setStyle("-fx-background-color: transparent;");
-        searchBox.setSpacing(10);
-        searchBox.setAlignment(Pos.CENTER_LEFT);
+        Label header = new Label("Devices");
+        header.getStyleClass().add("pane-title");
+        peerCountLabel = new Label("Searching…");
+        peerCountLabel.getStyleClass().add("pane-subtitle");
+        VBox titles = new VBox(2, header, peerCountLabel);
 
-        TextField searchField = new TextField();
-        searchField.setStyle(TEXT_FIELD_STYLE);
-        searchField.setPromptText("Search peers...");
-        searchField.setPrefHeight(40);
-        HBox.setHgrow(searchField, Priority.ALWAYS);
+        peerListView = new ListView<>(peerList);
+        peerListView.getStyleClass().add("peer-list");
+        peerListView.setCellFactory(lv -> new PeerCell());
+        peerListView.setFocusTraversable(false);
+        peerListView.setPlaceholder(placeholder("No devices found yet.\nOpen LAN-Caster on another computer on the same Wi-Fi, or add it by IP below.\nDevices must be paired once before files can be exchanged."));
+        VBox.setVgrow(peerListView, Priority.ALWAYS);
 
-        searchBox.getChildren().add(searchField);
+        HBox selectRow = new HBox(8);
+        Button selectAll = linkButton("Select all paired", e -> {
+            for (PeerInfo p : peerList) if (p.isOnline() && p.isCompatible() && Config.isPaired(p.getId())) selectedKeys.add(p.key());
+            peerListView.refresh();
+            updateSendButton();
+        });
+        Button clearSel = linkButton("Clear", e -> {
+            selectedKeys.clear();
+            peerListView.refresh();
+            updateSendButton();
+        });
+        selectRow.getChildren().addAll(selectAll, clearSel);
 
-        ListView<PeerInfo> listView = new ListView<>(peerList);
-        listView.setPrefHeight(400);
-        listView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
-        // Remove default blue selection color of listview, we handle it in cell
-        listView.setStyle("-fx-font-size: 13px; -fx-background-color: transparent; -fx-control-inner-background: " + LIGHT_BG + "; -fx-selection-bar: transparent; -fx-selection-bar-non-focused: transparent;");
-        listView.setFocusTraversable(false);
+        TextField ipField = new TextField();
+        ipField.setPromptText("Add by IP, e.g. 192.168.1.20 or 192.168.1.20:5000");
+        HBox.setHgrow(ipField, Priority.ALWAYS);
+        Button addBtn = new Button("Add");
+        addBtn.getStyleClass().addAll("btn", "btn-secondary");
+        addBtn.setOnAction(e -> addPeerByAddress(ipField.getText(), ipField));
+        ipField.setOnAction(e -> addBtn.fire());
+        HBox addRow = new HBox(8, ipField, addBtn);
+        addRow.setAlignment(Pos.CENTER_LEFT);
 
-        listView.setCellFactory(lv -> new PeerListCell());
+        discoveryStatusLabel = new Label("");
+        discoveryStatusLabel.getStyleClass().add("hint-text");
+        discoveryStatusLabel.setWrapText(true);
 
-        VBox.setVgrow(listView, Priority.ALWAYS);
-
-        Label statusLabel = new Label("🔍 Scanning for peers...");
-        statusLabel.setStyle(BODY_TEXT_STYLE);
-
-        container.getChildren().addAll(header, searchBox, listView, statusLabel);
-        return container;
+        pane.getChildren().addAll(titles, peerListView, selectRow, addRow, discoveryStatusLabel);
+        return pane;
     }
 
-    private class PeerListCell extends ListCell<PeerInfo> {
-        private final VBox content = new VBox();
+    private final class PeerCell extends ListCell<PeerInfo> {
+        private final CheckBox check = new CheckBox();
+        private final Label name = new Label();
+        private final Label meta = new Label();
+        private final Label dot = new Label("●");
+        private final Label pairChip = new Label("Pair");
+        private final Tooltip dotTip = new Tooltip();
+        private final HBox box;
 
-        public PeerListCell() {
-            content.setSpacing(4);
-            content.setPadding(new Insets(10));
-            // Initial style
-            content.setStyle(CARD_STYLE);
-        }
+        PeerCell() {
+            Tooltip.install(dot, dotTip);
+            check.setMouseTransparent(true);
+            check.setFocusTraversable(false);
+            pairChip.getStyleClass().addAll("chip", "chip-warn");
+            pairChip.setMouseTransparent(true);
+            name.getStyleClass().add("peer-name");
+            meta.getStyleClass().add("peer-meta");
+            VBox text = new VBox(2, name, meta);
+            HBox.setHgrow(text, Priority.ALWAYS);
+            box = new HBox(12, check, pairChip, text, dot);
+            box.setAlignment(Pos.CENTER_LEFT);
+            box.getStyleClass().add("peer-cell");
 
-        // 3. HANDLE SELECTION STATE VISUALLY
-        @Override
-        public void updateSelected(boolean selected) {
-            super.updateSelected(selected);
-            if (getItem() != null) {
-                if (selected) {
-                    // "Perfect" selected state: Highlighted border and light blue background
-                    content.setStyle(SELECTED_CARD_STYLE);
+            setOnMouseClicked(e -> {
+                PeerInfo p = getItem();
+                if (p == null || e.getButton() != javafx.scene.input.MouseButton.PRIMARY) return;
+                if (!p.isCompatible()) { toast(p.displayName() + " runs an older LAN-Caster. Update it first."); return; }
+                if (!Config.isPaired(p.getId())) { startPairing(p); return; }
+                if (selectedKeys.contains(p.key())) selectedKeys.remove(p.key()); else selectedKeys.add(p.key());
+                updateItem(p, false);
+                updateSendButton();
+            });
+
+            ContextMenu menu = new ContextMenu();
+            MenuItem pair = new MenuItem("Pair…");
+            pair.setOnAction(e -> {
+                PeerInfo p = getItem();
+                if (p == null) return;
+                if (Config.isPaired(p.getId())) {
+                    engine.unpair(p.getId());
+                    selectedKeys.remove(p.key());
+                    peerListView.refresh();
+                    updateSendButton();
+                    toast("Unpaired " + p.displayName());
                 } else {
-                    // Normal state
-                    content.setStyle(CARD_STYLE);
+                    startPairing(p);
                 }
-            }
+            });
+            menu.setOnShowing(e -> {
+                PeerInfo p = getItem();
+                pair.setText(p != null && Config.isPaired(p.getId()) ? "Unpair" : "Pair…");
+            });
+            MenuItem rename = new MenuItem("Rename…");
+            rename.setOnAction(e -> { if (getItem() != null) renamePeer(getItem()); });
+            MenuItem copyIp = new MenuItem("Copy IP address");
+            copyIp.setOnAction(e -> {
+                if (getItem() == null) return;
+                ClipboardContent cc = new ClipboardContent();
+                cc.putString(getItem().getIp());
+                Clipboard.getSystemClipboard().setContent(cc);
+                toast("Copied " + getItem().getIp());
+            });
+            MenuItem remove = new MenuItem("Remove from list");
+            remove.setOnAction(e -> { if (getItem() != null) removePeer(getItem()); });
+            menu.getItems().addAll(pair, rename, copyIp, remove);
+            setContextMenu(menu);
         }
 
         @Override
-        protected void updateItem(PeerInfo item, boolean empty) {
-            super.updateItem(item, empty);
-            if (empty || item == null) {
+        protected void updateItem(PeerInfo p, boolean empty) {
+            super.updateItem(p, empty);
+            if (empty || p == null) {
                 setGraphic(null);
-                setText(null);
-                setStyle("-fx-background-color: transparent;"); // Clear cell background
-            } else {
-                content.getChildren().clear();
-
-                Label nameLbl = new Label("💻 " + item.toString());
-                nameLbl.setStyle("-fx-font-size: 14px; -fx-font-weight: 600; -fx-text-fill: " + PRIMARY_COLOR + ";");
-
-                Label ipLbl = new Label(item.getIp());
-                ipLbl.setStyle("-fx-font-size: 11px; -fx-text-fill: #9ca3af;");
-
-                HBox actionBox = new HBox(8);
-                actionBox.setPadding(new Insets(8, 0, 0, 0));
-
-                Button renameBtn = createSmallButton("✏️ Rename", e -> {
-                    e.consume();
-                    renameItem(item);
-                });
-                Button copyBtn = createSmallButton("📋 Copy IP", e -> {
-                    e.consume();
-                    copyIP(item.getIp());
-                });
-
-                actionBox.getChildren().addAll(renameBtn, copyBtn);
-                content.getChildren().addAll(nameLbl, ipLbl, actionBox);
-
-                // Ensure style is correct on refresh
-                if (isSelected()) {
-                    content.setStyle(SELECTED_CARD_STYLE);
-                } else {
-                    content.setStyle(CARD_STYLE);
-                }
-
-                setGraphic(content);
-                setStyle("-fx-background-color: transparent; -fx-padding: 5 0 5 0;"); // Gap between items
+                return;
             }
-        }
-
-        private void renameItem(PeerInfo item) {
-            TextInputDialog dlg = new TextInputDialog(Optional.ofNullable(item.getName()).orElse(""));
-            dlg.setTitle("Rename Peer");
-            dlg.setHeaderText("Set a friendly name for " + item.getIp());
-            dlg.setContentText("Device Name (max 32 chars):");
-            Optional<String> res = dlg.showAndWait();
-            res.ifPresent(n -> {
-                String clean = sanitizeName(n, 32);
-                Config.setPeerName(item.getIp(), clean);
-                item.setName(clean);
-                updateItem(item, false);
-            });
-        }
-
-        private void copyIP(String ip) {
-            Clipboard cb = Clipboard.getSystemClipboard();
-            ClipboardContent cc = new ClipboardContent();
-            cc.putString(ip);
-            cb.setContent(cc);
-            showNotification("IP copied to clipboard!");
+            boolean paired = Config.isPaired(p.getId());
+            boolean selected = paired && selectedKeys.contains(p.key());
+            check.setSelected(selected);
+            check.setDisable(!p.isCompatible());
+            check.setVisible(paired);
+            check.setManaged(paired);
+            pairChip.setVisible(!paired);
+            pairChip.setManaged(!paired);
+            name.setText(p.displayName());
+            StringBuilder m = new StringBuilder(p.getIp());
+            if (p.getPort() != Protocol.DEFAULT_PORT) m.append(':').append(p.getPort());
+            if (!p.getOs().isEmpty()) m.append("  ·  ").append(p.getOs());
+            m.append(paired ? "  ·  paired" : "  ·  not paired, click to pair");
+            if (!p.isCompatible()) m.append("  ·  needs update");
+            else if (p.isManual()) m.append("  ·  added by IP");
+            else if (!p.isOnline()) m.append("  ·  last seen ").append(Fmt.ago(System.currentTimeMillis() - p.getLastSeen()));
+            meta.setText(m.toString());
+            dot.getStyleClass().setAll(p.isOnline() ? "dot-online" : "dot-offline");
+            dotTip.setText(p.isOnline() ? "Online" : "Not responding");
+            box.pseudoClassStateChanged(javafx.css.PseudoClass.getPseudoClass("checked"), selected);
+            box.setOpacity(p.isOnline() ? 1.0 : 0.55);
+            setGraphic(box);
         }
     }
 
-    private Button createSmallButton(String text, javafx.event.EventHandler<javafx.event.ActionEvent> action) {
-        Button btn = new Button(text);
-        btn.setStyle("-fx-font-size: 11px; -fx-padding: 4 8 4 8; -fx-background-color: " + SECONDARY_COLOR + "; "
-                + "-fx-text-fill: white; -fx-background-radius: 4; -fx-cursor: hand;");
-        btn.setOnAction(action);
-        return btn;
-    }
-
-    private VBox createDashboardPane(Stage stage) {
-        VBox container = new VBox();
-        container.setStyle("-fx-background-color: " + LIGHT_BG + ";");
-        container.setPadding(new Insets(20));
-        container.setSpacing(15);
-
-        Label header = new Label("📤 Transfer Activity");
-        header.setStyle(HEADER_STYLE);
-
-        HBox statsBox = createStatsBox();
-
-        progressPanel = new VBox(12);
-        progressPanel.setPadding(new Insets(0));
-        ScrollPane scrollPane = new ScrollPane(progressPanel);
-        scrollPane.setFitToWidth(true);
-        scrollPane.setStyle("-fx-background: transparent; -fx-background-color: transparent; -fx-padding: 0;");
-        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
-        VBox.setVgrow(scrollPane, Priority.ALWAYS);
-
-        HBox actionButtonsBox = new HBox(15);
-        actionButtonsBox.setAlignment(Pos.CENTER);
-        actionButtonsBox.setSpacing(15);
-
-        Button sendBtn = new Button("📤 Send File");
-        sendBtn.setStyle(BUTTON_PRIMARY_STYLE);
-        sendBtn.setPrefHeight(48);
-        sendBtn.setMaxWidth(Double.MAX_VALUE);
-        HBox.setHgrow(sendBtn, Priority.ALWAYS);
-
-        Button downloadBtn = new Button("📥 Download File");
-        downloadBtn.setStyle(BUTTON_SUCCESS_STYLE);
-        downloadBtn.setPrefHeight(48);
-        downloadBtn.setMaxWidth(Double.MAX_VALUE);
-        HBox.setHgrow(downloadBtn, Priority.ALWAYS);
-
-        sendBtn.setOnAction(e -> handleSendFile(stage));
-        downloadBtn.setOnAction(e -> handleDownloadFile(stage));
-
-        actionButtonsBox.getChildren().addAll(sendBtn, downloadBtn);
-
-        container.getChildren().addAll(header, statsBox, scrollPane, actionButtonsBox);
-        return container;
-    }
-
-    private void handleSendFile(Stage stage) {
-        ListView<PeerInfo> listView = getListView(stage);
-        if (listView == null) return;
-        List<PeerInfo> selectedPeers = listView.getSelectionModel().getSelectedItems();
-
-        if (selectedPeers.isEmpty()) {
-            showAlert("No Peers Selected", "Please select at least one peer to send the file to.");
-            return;
+    private void onPeerSeen(PeerInfo fresh) {
+        String custom = Config.getPeerName(fresh.getIp());
+        PeerInfo existing = peersByKey.get(fresh.key());
+        if (existing == null) {
+            if (custom != null) fresh.setName(custom);
+            peersByKey.put(fresh.key(), fresh);
+            peerList.add(fresh);
+            if (fresh.isCompatible()) toast("Found " + fresh.displayName());
+        } else {
+            boolean wasOnline = existing.isOnline();
+            existing.updateFrom(fresh, custom != null);
+            if (custom != null) existing.setName(custom);
+            if (!wasOnline) peerListView.refresh();
         }
+        updatePeerCount();
+    }
 
-        FileChooser fileChooser = new FileChooser();
-        fileChooser.setTitle("Select File to Send");
-        File file = fileChooser.showOpenDialog(stage);
-
-        if (file != null) {
-            if (currentSender != null) currentSender.stop();
-
-            currentSender = new Sender((Socket socket) -> {
-                String peerIp = socket.getInetAddress().getHostAddress();
-                String key = peerIp + "|" + file.getName();
-
-                TransferUIComponents ui = activeTransfers.computeIfAbsent(key, k -> {
-                    FutureTask<TransferUIComponents> uiTask = new FutureTask<>(() ->
-                            addTransferCard(file.getName(), peerIp, "Sending", file.length())
-                    );
-                    Platform.runLater(uiTask);
-                    try {
-                        TransferUIComponents result = uiTask.get();
-                        activeProgress.putIfAbsent(key, new AtomicLong(0));
-                        updateStatsUI();
-                        return result;
-                    } catch (Exception ex) {
-                        logger.log(Level.WARNING, "Failed to create UI card", ex);
-                        return null;
+    private void addPeerByAddress(String text, TextField field) {
+        String t = text == null ? "" : text.trim();
+        if (t.isEmpty()) return;
+        String ip = t;
+        int port = Protocol.DEFAULT_PORT;
+        int colon = t.lastIndexOf(':');
+        if (colon > 0 && t.indexOf(':') == colon) {
+            ip = t.substring(0, colon);
+            try { port = Integer.parseInt(t.substring(colon + 1)); } catch (NumberFormatException e) { toast("Invalid port"); return; }
+        }
+        final String fIp = ip;
+        final int fPort = port;
+        toast("Looking for LAN-Caster at " + fIp + ":" + fPort + "…");
+        Thread t2 = new Thread(() -> {
+            try {
+                PeerInfo p = engine.ping(fIp, fPort);
+                Platform.runLater(() -> {
+                    PeerInfo existing = peersByKey.get(p.key());
+                    if (existing == null) {
+                        String custom = Config.getPeerName(p.getIp());
+                        if (custom != null) p.setName(custom);
+                        peersByKey.put(p.key(), p);
+                        peerList.add(p);
+                    } else {
+                        existing.updateFrom(p, Config.getPeerName(p.getIp()) != null);
                     }
+                    selectedKeys.add(p.key());
+                    field.clear();
+                    peerListView.refresh();
+                    updatePeerCount();
+                    updateSendButton();
+                    toast("Connected to " + p.displayName());
                 });
-
-                long totalFileBytes = file.length();
-                AtomicLong globalCounter = activeProgress.computeIfAbsent(key, k -> new AtomicLong(0));
-
-                return new org.develop.lancaster.core.transfer.ProgressListener() {
-                    private final AtomicLong lastSeen = new AtomicLong(0);
-
-                    @Override
-                    public void onProgress(long current, long chunkTotal) {
-                        long prev = lastSeen.getAndSet(current);
-                        long delta = current - prev;
-                        if (delta <= 0) return;
-                        long aggregated = globalCounter.addAndGet(delta);
-                        totalBytesTransferred.addAndGet(delta);
-
-                        updateProgress(ui, aggregated, totalFileBytes);
-
-                        if (aggregated >= totalFileBytes) {
-                            activeTransfers.remove(key);
-                            activeProgress.remove(key);
-                            totalFilesCompleted.incrementAndGet();
-                            updateStatsUI();
-                        }
-                    }
-                };
-            });
-
-            new Thread(() -> currentSender.startServing(file)).start();
-            showNotification("Hosting '" + file.getName() + "' for " + selectedPeers.size() + " peer(s)");
-        }
+            } catch (IOException e) {
+                Platform.runLater(() -> toast("No LAN-Caster found at " + fIp + ":" + fPort + " (" + e.getMessage() + ")"));
+            }
+        }, "ping-peer");
+        t2.setDaemon(true);
+        t2.start();
     }
 
-    private void handleDownloadFile(Stage stage) {
-        ListView<PeerInfo> listView = getListView(stage);
-        if (listView == null) return;
-        PeerInfo selectedPeer = listView.getSelectionModel().getSelectedItem();
+    // ------------------------------------------------------------------ pairing
 
-        if (selectedPeer == null) {
-            showAlert("No Peer Selected", "Please select ONE peer to download from.");
+    private void startPairing(PeerInfo p) {
+        if (p.getId() == null) {
+            toast("Cannot pair: unknown device id. Remove the device and add it again by IP.");
             return;
         }
+        Dialog<ButtonType> dlg = new Dialog<>();
+        dlg.setTitle("Pair with " + p.displayName());
+        dlg.initOwner(stage);
+        dlg.getDialogPane().getButtonTypes().add(ButtonType.CANCEL);
 
-        DirectoryChooser dirChooser = new DirectoryChooser();
-        dirChooser.setTitle("Select Save Location");
-        File saveDir = dirChooser.showDialog(stage);
+        Label intro = new Label("A pairing request was sent to " + p.displayName() + " (" + p.getIp() + ").\n"
+                + "On that device, check that the same code is shown and press Pair.");
+        intro.setWrapText(true);
+        Label code = new Label("······");
+        code.getStyleClass().add("pair-code");
+        Label waiting = new Label("Waiting for " + p.displayName() + " to confirm…");
+        waiting.getStyleClass().add("hint-text");
+        VBox content = new VBox(14, intro, code, waiting);
+        content.setAlignment(Pos.CENTER);
+        content.setPadding(new Insets(10));
+        content.setPrefWidth(380);
+        dlg.getDialogPane().setContent(content);
+        dlg.show();
 
-        if (saveDir != null) {
-            String display = selectedPeer.toString();
-            TransferUIComponents ui = addTransferCard("Requesting File...", display, "Downloading", 100);
-            updateStatsUI();
+        engine.requestPairing(p, c -> Platform.runLater(() -> code.setText(c)))
+                .thenAccept(r -> Platform.runLater(() -> {
+                    dlg.close();
+                    if (r.ok) {
+                        if (r.peerName != null && Config.getPeerName(p.getIp()) == null) p.setName(r.peerName);
+                        selectedKeys.add(p.key());
+                        toast("Paired with " + p.displayName() + ". You can now send files to each other.");
+                    } else {
+                        toast("Pairing failed: " + r.message);
+                    }
+                    peerListView.refresh();
+                    updateSendButton();
+                }));
+    }
 
-            TransferManager tm = new TransferManager();
-            tm.downloadFile(selectedPeer.getIp(), saveDir.getAbsolutePath(), (current, total) -> {
-                totalBytesTransferred.addAndGet(current);
-                updateProgress(ui, current, total);
-                if (current >= total) {
-                    totalFilesCompleted.incrementAndGet();
-                    updateStatsUI();
-                }
-            });
+    private void showPairingRequest(TransferEngine.PairingRequest req, CompletableFuture<Boolean> answer) {
+        if (stage.isIconified()) stage.setIconified(false);
+        stage.toFront();
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+        alert.setTitle("Pairing request");
+        alert.setHeaderText(req.peerName + " wants to pair with this device");
+        ButtonType pairBtn = new ButtonType("Pair", javafx.scene.control.ButtonBar.ButtonData.OK_DONE);
+        ButtonType rejectBtn = new ButtonType("Reject", javafx.scene.control.ButtonBar.ButtonData.CANCEL_CLOSE);
+        alert.getButtonTypes().setAll(rejectBtn, pairBtn);
+        Label text = new Label("Device: " + req.peerName + " (" + req.peerIp + ")\n\n"
+                + "Only press Pair if " + req.peerName + " is showing this code:");
+        text.setWrapText(true);
+        Label code = new Label(req.code);
+        code.getStyleClass().add("pair-code");
+        VBox box = new VBox(12, text, code);
+        box.setAlignment(Pos.CENTER_LEFT);
+        box.setPrefWidth(380);
+        alert.getDialogPane().setContent(box);
+        alert.initOwner(stage);
+        Optional<ButtonType> r = alert.showAndWait();
+        boolean ok = r.isPresent() && r.get() == pairBtn;
+        answer.complete(ok);
+        if (ok) {
+            toast("Paired with " + req.peerName);
+            peerListView.refresh();
         }
     }
 
-    private HBox createStatsBox() {
-        HBox statsBox = new HBox(15);
-        statsBox.setStyle("-fx-background-color: transparent;");
-        statsBox.setSpacing(15);
-
-        activeTransfersLabel = new Label("0");
-        speedLabel = new Label("0 MB/s");
-        filesCompletedLabel = new Label("0");
-
-        VBox stat1 = createStatCard("Active Transfers", activeTransfersLabel, "#3b82f6");
-        VBox stat2 = createStatCard("Total Speed", speedLabel, "#10b981");
-        VBox stat3 = createStatCard("Files Completed", filesCompletedLabel, "#f59e0b");
-
-        statsBox.getChildren().addAll(stat1, stat2, stat3);
-        return statsBox;
+    private void renamePeer(PeerInfo p) {
+        TextInputDialog dlg = new TextInputDialog(Optional.ofNullable(p.getName()).orElse(""));
+        dlg.setTitle("Rename device");
+        dlg.setHeaderText("Friendly name for " + p.getIp());
+        dlg.setContentText("Name:");
+        dlg.initOwner(stage);
+        dlg.showAndWait().ifPresent(n -> {
+            String clean = sanitizeName(n, 32);
+            Config.setPeerName(p.getIp(), clean);
+            p.setName(clean);
+            peerListView.refresh();
+        });
     }
 
-    private VBox createStatCard(String title, Label valueLabel, String color) {
-        VBox card = new VBox(8);
-        card.setStyle(CARD_STYLE + " -fx-padding: 15;");
+    private void removePeer(PeerInfo p) {
+        peersByKey.remove(p.key());
+        peerList.remove(p);
+        selectedKeys.remove(p.key());
+        updatePeerCount();
+        updateSendButton();
+    }
+
+    private void updatePeerCount() {
+        long online = peerList.stream().filter(PeerInfo::isOnline).count();
+        if (peerList.isEmpty()) peerCountLabel.setText("Searching your network…");
+        else peerCountLabel.setText(online + " online  ·  " + selectedKeys.size() + " selected");
+    }
+
+    private void updateSendButton() {
+        int n = selectedKeys.size();
+        sendBtn.setDisable(n == 0);
+        sendBtn.setText(n == 0 ? "Select a device to send files"
+                : "Send files to " + n + (n == 1 ? " device" : " devices"));
+        updatePeerCount();
+    }
+
+    private List<PeerInfo> selectedPeers() {
+        List<PeerInfo> out = new ArrayList<>();
+        for (String k : selectedKeys) {
+            PeerInfo p = peersByKey.get(k);
+            if (p != null) out.add(p);
+        }
+        return out;
+    }
+
+    // ------------------------------------------------------------------ transfers
+
+    private VBox createTransferPane() {
+        VBox pane = new VBox(14);
+        pane.getStyleClass().add("main-pane");
+        pane.setPadding(new Insets(18));
+
+        Label header = new Label("Transfers");
+        header.getStyleClass().add("pane-title");
+
+        activeLabel = new Label("0");
+        speedLabel = new Label("0 B/s");
+        completedLabel = new Label("0");
+        HBox stats = new HBox(12,
+                statCard("Active", activeLabel, "stat-blue"),
+                statCard("Current speed", speedLabel, "stat-green"),
+                statCard("Completed", completedLabel, "stat-amber"));
+
+        sendBtn = new Button();
+        sendBtn.getStyleClass().addAll("btn", "btn-primary", "btn-big");
+        sendBtn.setMaxWidth(Double.MAX_VALUE);
+        sendBtn.setOnAction(e -> chooseAndSend());
+        updateSendButton();
+
+        Label dropHint = new Label("Tip: you can also drag files from your file manager and drop them on this window.");
+        dropHint.getStyleClass().add("hint-text");
+
+        transfersBox = new VBox(10);
+        emptyTransfersLabel = placeholder("No transfers yet.\nFiles other devices send you will show up here with an Accept button.");
+        transfersBox.getChildren().add(emptyTransfersLabel);
+
+        ScrollPane scroll = new ScrollPane(transfersBox);
+        scroll.setFitToWidth(true);
+        scroll.getStyleClass().add("transfer-scroll");
+        scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        VBox.setVgrow(scroll, Priority.ALWAYS);
+
+        HBox listHeader = new HBox();
+        listHeader.setAlignment(Pos.CENTER_LEFT);
+        Label listTitle = new Label("Activity");
+        listTitle.getStyleClass().add("section-title");
+        Region sp = new Region();
+        HBox.setHgrow(sp, Priority.ALWAYS);
+        Button clear = linkButton("Clear finished", e -> {
+            for (TransferSession s : engine.getSessions()) if (!s.isActive()) dismiss(s);
+        });
+        listHeader.getChildren().addAll(listTitle, sp, clear);
+
+        pane.getChildren().addAll(header, stats, sendBtn, dropHint, listHeader, scroll);
+        return pane;
+    }
+
+    private VBox statCard(String title, Label value, String colorClass) {
+        VBox card = new VBox(4);
+        card.getStyleClass().addAll("card", "stat-card");
         card.setAlignment(Pos.CENTER);
         HBox.setHgrow(card, Priority.ALWAYS);
-
-        Label titleLbl = new Label(title);
-        titleLbl.setStyle("-fx-font-size: 12px; -fx-text-fill: #9ca3af; -fx-font-weight: 600;");
-
-        valueLabel.setStyle("-fx-font-size: 20px; -fx-font-weight: bold; -fx-text-fill: " + color + ";");
-
-        card.getChildren().addAll(titleLbl, valueLabel);
+        Label t = new Label(title);
+        t.getStyleClass().add("stat-title");
+        value.getStyleClass().addAll("stat-value", colorClass);
+        card.getChildren().addAll(t, value);
         return card;
     }
 
-    private void updateStatsUI() {
-        Platform.runLater(() -> {
-            int activeCount = activeTransfers.size();
-            activeTransfersLabel.setText(String.valueOf(activeCount));
-
-            long elapsedSeconds = Math.max(1, (System.currentTimeMillis() - statsStartTime) / 1000);
-            double mbps = (totalBytesTransferred.get() / (1024.0 * 1024.0)) / elapsedSeconds;
-            speedLabel.setText(String.format("%.2f MB/s", mbps));
-
-            filesCompletedLabel.setText(String.valueOf(totalFilesCompleted.get()));
-        });
-    }
-
-    private void updateProgress(TransferUIComponents ui, long current, long total) {
-        if (ui == null) return;
-
-        double progress = total > 0 ? (double) current / total : 0;
-
-        Platform.runLater(() -> {
-            ui.progressBar.setProgress(progress);
-            int percent = (int) (progress * 100);
-            ui.percentLabel.setText(percent + "%");
-
-            if (progress >= 0.99) {
-                ui.statusLabel.setText("✓ Completed");
-                ui.statusLabel.setTextFill(Color.web(SUCCESS_COLOR));
-                ui.progressBar.setStyle("-fx-accent: " + SUCCESS_COLOR + ";");
-                ui.card.setStyle(CARD_STYLE + " -fx-border-color: " + SUCCESS_COLOR + ";");
-            } else {
-                ui.statusLabel.setText("↻ " + ui.transferType + "...");
-                ui.statusLabel.setTextFill(Color.web(SECONDARY_COLOR));
-            }
-        });
-    }
-
-    private static class TransferUIComponents {
-        ProgressBar progressBar;
-        Label percentLabel;
-        Label statusLabel;
-        VBox card;
-        String transferType;
-
-        public TransferUIComponents(ProgressBar pb, Label pl, Label sl, VBox c, String type) {
-            this.progressBar = pb;
-            this.percentLabel = pl;
-            this.statusLabel = sl;
-            this.card = c;
-            this.transferType = type;
+    private void chooseAndSend() {
+        if (selectedKeys.isEmpty()) {
+            toast("Select at least one device first");
+            return;
         }
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle("Choose files to send");
+        List<File> files = chooser.showOpenMultipleDialog(stage);
+        if (files != null && !files.isEmpty()) sendFiles(files);
     }
 
-    private TransferUIComponents addTransferCard(String filename, String peerDisplay, String type, long totalBytes) {
-        VBox card = new VBox(12);
-        card.setStyle(CARD_STYLE);
-        card.setPadding(new Insets(16));
-
-        HBox headerRow = new HBox();
-        headerRow.setSpacing(12);
-        headerRow.setAlignment(Pos.CENTER_LEFT);
-
-        Label iconLbl = new Label(type.equals("Sending") ? "📤" : "📥");
-        iconLbl.setStyle("-fx-font-size: 20px;");
-
-        VBox infoBox = new VBox(2);
-        Label nameLbl = new Label(filename);
-        nameLbl.setStyle("-fx-font-size: 14px; -fx-font-weight: 600; -fx-text-fill: " + PRIMARY_COLOR + ";");
-        nameLbl.setWrapText(true);
-
-        Label peerLbl = new Label(peerDisplay);
-        peerLbl.setStyle("-fx-font-size: 11px; -fx-text-fill: #9ca3af;");
-
-        infoBox.getChildren().addAll(nameLbl, peerLbl);
-
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
-
-        Label statusLbl = new Label("Waiting...");
-        statusLbl.setStyle("-fx-font-size: 12px; -fx-font-weight: 600; -fx-text-fill: " + WARNING_COLOR + ";");
-
-        headerRow.getChildren().addAll(iconLbl, infoBox, spacer, statusLbl);
-
-        HBox progressRow = new HBox(10);
-        progressRow.setAlignment(Pos.CENTER_LEFT);
-
-        ProgressBar pb = new ProgressBar(0);
-        pb.setMinHeight(8);
-        pb.setPrefHeight(8);
-        pb.setStyle("-fx-accent: " + SECONDARY_COLOR + "; -fx-control-inner-background: " + BORDER_COLOR + ";");
-        HBox.setHgrow(pb, Priority.ALWAYS);
-
-        Label percentLbl = new Label("0%");
-        percentLbl.setStyle("-fx-font-size: 12px; -fx-font-weight: 600; -fx-text-fill: " + PRIMARY_COLOR + "; -fx-min-width: 40;");
-
-        progressRow.getChildren().addAll(pb, percentLbl);
-
-        card.getChildren().addAll(headerRow, progressRow);
-        progressPanel.getChildren().add(0, card);
-
-        return new TransferUIComponents(pb, percentLbl, statusLbl, card, type);
+    private void sendFiles(List<File> files) {
+        List<PeerInfo> peers = selectedPeers();
+        if (peers.isEmpty()) {
+            toast("Select a device in the list first, then drop or choose files");
+            return;
+        }
+        List<File> regular = new ArrayList<>();
+        int folders = 0;
+        for (File f : files) {
+            if (f.isDirectory()) folders++;
+            else if (f.isFile()) regular.add(f);
+        }
+        if (folders > 0) toast("Folders are not supported yet, zip them first (" + folders + " skipped)");
+        if (regular.isEmpty()) return;
+        engine.sendFiles(regular, peers);
+        toast("Offering " + regular.size() + (regular.size() == 1 ? " file to " : " files to ")
+                + peers.size() + (peers.size() == 1 ? " device" : " devices"));
     }
 
-    private ListView<PeerInfo> getListView(Stage stage) {
-        // Safe lookup for the list view in the new structure
-        if (stage.getScene() == null) return null;
+    private void onSessionCreated(TransferSession s) {
+        TransferCard card = new TransferCard(s, this);
+        cards.put(s.getId(), card);
+        transfersBox.getChildren().remove(emptyTransfersLabel);
+        transfersBox.getChildren().add(0, card);
+        s.addListener(sess -> Platform.runLater(() -> onSessionChanged(sess)));
+        if (s.getState() == TransferSession.State.INCOMING_OFFER) {
+            toast(s.getPeerName() + " wants to send you " + s.getFileName() + " (" + Fmt.bytes(s.getFileSize()) + ")");
+            stage.toFront();
+            if (stage.isIconified()) stage.setIconified(false);
+        }
+        updateStats();
+    }
+
+    private void onSessionChanged(TransferSession s) {
+        TransferCard card = cards.get(s.getId());
+        if (card != null) card.refresh();
+        if (s.getState() == TransferSession.State.COMPLETED) {
+            completedCount++;
+            toast((s.getDirection() == TransferSession.Direction.SEND ? "Sent " : "Received ") + s.getFileName());
+        } else if (s.getState() == TransferSession.State.FAILED) {
+            toast(s.getFileName() + ": " + s.getMessage());
+        }
+        updateStats();
+    }
+
+    private void tick() {
+        // peers: expire silent ones, refresh online indicators
+        boolean changed = false;
+        for (Iterator<PeerInfo> it = peerList.iterator(); it.hasNext(); ) {
+            PeerInfo p = it.next();
+            if (p.isExpired()) {
+                it.remove();
+                peersByKey.remove(p.key());
+                if (selectedKeys.remove(p.key())) updateSendButton();
+                changed = true;
+            }
+        }
+        if (changed || !peerList.isEmpty()) peerListView.refresh();
+        updatePeerCount();
+        String err = discovery.getLastError();
+        discoveryStatusLabel.setText(err == null ? "" : "Discovery problem: " + err);
+
+        // transfers
+        for (TransferCard c : cards.values()) {
+            if (c.getSession().isActive()) c.refresh();
+        }
+        updateStats();
+        if (engine.getPort() > 0) portLabel.setText("Listening on port " + engine.getPort());
+    }
+
+    private void updateStats() {
+        int active = 0;
+        double bps = 0;
+        for (TransferSession s : engine.getSessions()) {
+            if (s.isActive()) active++;
+            bps += s.bytesPerSecond();
+        }
+        activeLabel.setText(String.valueOf(active));
+        speedLabel.setText(Fmt.speed(bps));
+        completedLabel.setText(String.valueOf(completedCount));
+    }
+
+    // ------------------------------------------------------------------ card actions
+
+    @Override
+    public void accept(TransferSession s, boolean chooseFolder) {
+        Path dir = Config.getDownloadDir();
+        if (chooseFolder) {
+            DirectoryChooser dc = new DirectoryChooser();
+            dc.setTitle("Save " + s.getFileName() + " to…");
+            dc.setInitialDirectory(dir.toFile());
+            File chosen = dc.showDialog(stage);
+            if (chosen == null) return;
+            dir = chosen.toPath();
+        }
+        s.setMessage("Saving to " + dir);
+        s.accept(dir);
+    }
+
+    @Override
+    public void decline(TransferSession s) { s.decline(); }
+
+    @Override
+    public void cancel(TransferSession s) { s.requestCancel(); }
+
+    @Override
+    public void retry(TransferSession s) {
+        PeerInfo peer = peersByKey.get(s.getPeerKey());
+        if (peer == null) {
+            peer = PeerInfo.manual(s.getPeerIp(), s.getPeerPort() > 0 ? s.getPeerPort() : Protocol.DEFAULT_PORT);
+            peer.setName(s.getPeerName());
+        }
+        Path local = s.getLocalFile();
+        if (local == null || !local.toFile().isFile()) {
+            toast("The original file is no longer available");
+            return;
+        }
+        dismiss(s);
+        engine.sendFile(local.toFile(), peer);
+    }
+
+    @Override
+    public void openFolder(Path p) {
+        if (p == null) return;
         try {
-            SplitPane split = (SplitPane) stage.getScene().getRoot().lookup(".split-pane");
-            VBox leftPane = (VBox) split.getItems().get(0);
-            for(javafx.scene.Node n : leftPane.getChildren()) {
-                if (n instanceof ListView) {
-                    return (ListView<PeerInfo>) n;
-                }
-            }
-        } catch (Exception e) {
-            return null;
+            getHostServices().showDocument(p.toUri().toString());
+        } catch (RuntimeException e) {
+            toast("Saved in " + p);
         }
-        return null;
     }
 
-    private void startDiscovery() {
-        discoveryService = new DiscoveryService();
-        discoveryService.setLocalName(Config.getDeviceName());
-        discoveryService.setOnPeerFound(pi -> {
-            Platform.runLater(() -> {
-                String override = Config.getPeerName(pi.getIp());
-                if (override != null) pi.setName(override);
-
-                if (!peerList.contains(pi)) {
-                    peerList.add(pi);
-                } else {
-                    int idx = peerList.indexOf(pi);
-                    peerList.set(idx, pi);
-                }
-            });
-        });
-        Thread t = new Thread(discoveryService);
-        t.setDaemon(true);
-        t.start();
-        Thread b = new Thread(() -> {
-            while (true) {
-                discoveryService.broadcastPresence();
-                try {
-                    Thread.sleep(3000);
-                } catch (Exception e) {
-                    logger.log(Level.FINE, "Discovery broadcaster sleep interrupted", e);
-                }
-            }
-        });
-        b.setDaemon(true);
-        b.start();
+    @Override
+    public void dismiss(TransferSession s) {
+        engine.removeSession(s);
+        TransferCard c = cards.remove(s.getId());
+        if (c != null) transfersBox.getChildren().remove(c);
+        if (cards.isEmpty() && !transfersBox.getChildren().contains(emptyTransfersLabel)) {
+            transfersBox.getChildren().add(emptyTransfersLabel);
+        }
+        updateStats();
     }
 
-    private void showAlert(String title, String content) {
-        Alert alert = new Alert(Alert.AlertType.WARNING);
+    // ------------------------------------------------------------------ settings
+
+    private void showSettings() {
+        Dialog<ButtonType> dlg = new Dialog<>();
+        dlg.setTitle("Settings");
+        dlg.initOwner(stage);
+        dlg.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+
+        TextField dirField = new TextField(Config.getDownloadDir().toString());
+        dirField.setPrefWidth(320);
+        Button browse = new Button("Browse…");
+        browse.setOnAction(e -> {
+            DirectoryChooser dc = new DirectoryChooser();
+            dc.setTitle("Download folder");
+            File cur = new File(dirField.getText());
+            if (cur.isDirectory()) dc.setInitialDirectory(cur);
+            File chosen = dc.showDialog(stage);
+            if (chosen != null) dirField.setText(chosen.getAbsolutePath());
+        });
+
+        ChoiceBox<String> streams = new ChoiceBox<>(FXCollections.observableArrayList(
+                "Auto", "1", "2", "3", "4", "6", "8", "12", "16"));
+        int cur = Config.getParallelStreams();
+        streams.setValue(cur == 0 ? "Auto" : String.valueOf(cur));
+        if (!streams.getItems().contains(streams.getValue())) streams.setValue("Auto");
+
+        CheckBox auto = new CheckBox("Automatically accept files from paired devices into the download folder");
+        auto.setSelected(Config.isAutoAccept());
+
+        GridPane grid = new GridPane();
+        grid.setHgap(10);
+        grid.setVgap(12);
+        grid.setPadding(new Insets(10));
+        grid.add(new Label("Download folder"), 0, 0);
+        grid.add(new HBox(6, dirField, browse), 1, 0);
+        grid.add(new Label("Parallel streams"), 0, 1);
+        grid.add(new HBox(10, streams, hint("Auto = " + Config.resolveParallelStreams() + " on this machine. More streams help on fast networks; fewer on slow Wi-Fi.")), 1, 1);
+        grid.add(auto, 1, 2);
+        grid.add(hint("Listening on TCP port " + engine.getPort() + " and UDP port " + Protocol.DISCOVERY_PORT
+                + ". If a device cannot see or reach you, allow these in the firewall."), 1, 3);
+        dlg.getDialogPane().setContent(grid);
+
+        Optional<ButtonType> r = dlg.showAndWait();
+        if (r.isPresent() && r.get() == ButtonType.OK) {
+            Config.setDownloadDir(Path.of(dirField.getText().trim()));
+            Config.setParallelStreams("Auto".equals(streams.getValue()) ? 0 : Integer.parseInt(streams.getValue()));
+            Config.setAutoAccept(auto.isSelected());
+            toast("Settings saved");
+        }
+    }
+
+    // ------------------------------------------------------------------ helpers
+
+    private Label hint(String text) {
+        Label l = new Label(text);
+        l.getStyleClass().add("hint-text");
+        l.setWrapText(true);
+        l.setMaxWidth(380);
+        return l;
+    }
+
+    private Label placeholder(String text) {
+        Label l = new Label(text);
+        l.getStyleClass().add("placeholder-text");
+        l.setWrapText(true);
+        l.setAlignment(Pos.CENTER);
+        l.setMaxWidth(Double.MAX_VALUE);
+        l.setPadding(new Insets(30));
+        return l;
+    }
+
+    private Button linkButton(String text, javafx.event.EventHandler<javafx.event.ActionEvent> h) {
+        Button b = new Button(text);
+        b.getStyleClass().addAll("btn", "btn-link");
+        b.setOnAction(h);
+        return b;
+    }
+
+    private void toast(String message) {
+        if (toastLabel == null) return;
+        toastLabel.setText(message);
+        toastLabel.setOpacity(1);
+        toastLabel.setVisible(true);
+        if (toastHider != null) toastHider.stop();
+        toastHider = new PauseTransition(Duration.seconds(3.5 + message.length() / 40.0));
+        toastHider.setOnFinished(e -> {
+            FadeTransition fade = new FadeTransition(Duration.millis(400), toastLabel);
+            fade.setToValue(0);
+            fade.setOnFinished(ev -> toastLabel.setVisible(false));
+            fade.play();
+        });
+        toastHider.play();
+    }
+
+    private void showError(String title, String content) {
+        Alert alert = new Alert(Alert.AlertType.ERROR);
         alert.setTitle(title);
         alert.setHeaderText(null);
         alert.setContentText(content);
+        alert.initOwner(stage);
         alert.showAndWait();
     }
 
-    private void showNotification(String message) {
-        Alert alert = new Alert(Alert.AlertType.INFORMATION);
-        alert.setTitle("Info");
-        alert.setHeaderText(null);
-        alert.setContentText(message);
-        alert.showAndWait();
-    }
-
-    private String sanitizeName(String input, int maxLen) {
+    private static String sanitizeName(String input, int maxLen) {
         if (input == null) return "";
-        String s = input.replaceAll("[\r\n\t]", " ").trim();
-        s = s.replaceAll("[|()]", "");
+        String s = input.replaceAll("[\r\n\t|]", " ").trim();
         if (s.length() > maxLen) s = s.substring(0, maxLen);
         return s;
     }
 
     @Override
     public void stop() {
-        if (currentSender != null) currentSender.stop();
-        System.exit(0);
+        logger.info("Shutting down");
+        try {
+            if (discovery != null) discovery.stop();
+            if (engine != null) engine.shutdown();
+        } finally {
+            Platform.exit();
+            System.exit(0);
+        }
     }
 
     public static void main(String[] args) {

@@ -22,6 +22,8 @@ output/
 *.tmp
 *.part
 *.crdownload
+*.lcpart
+*.lcstate
 
 # --- Test Data ---
 test_files/
